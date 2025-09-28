@@ -652,30 +652,38 @@ class Coordinator_Agent(Agent):
         pass
 
 class Care_Model(Model):
-    # constructor
     def __init__(self,
-                N_RESIDENT_AGENTS,
-                N_MICROPROVIDER_AGENTS,
-                N_UNPAIDCARE_AGENTS,
-                N_COORDINATOR_AGENTS,
-                width,
-                height,
-                resident_care_need_min = 1,
-                resident_care_need_max = 20,
-                microprovider_care_cap_min=1,
-                microprovider_care_cap_max=50,
-                p_resident_join=0.01,
-                p_microprovider_join=0.001,
-                p_resident_leave=0.001,
-                p_microprovider_leave=0.001,
-                p_use_coordinator=0.02,
-                p_approach_random_micro=0.001,
-                p_review_care=0.2,
-                p_promote_micro=0.2,
-                micro_quality_threshold=0.5,
-                micro_join_coord=0.5
-                ):
+                 N_RESIDENT_AGENTS,
+                 N_MICROPROVIDER_AGENTS,
+                 N_UNPAIDCARE_AGENTS,
+                 N_COORDINATOR_AGENTS,
+                 width,
+                 height,
+                 resident_care_need_min,
+                 resident_care_need_max,
+                 microprovider_care_cap_min,
+                 microprovider_care_cap_max,
+                 p_resident_join,
+                 p_microprovider_join,
+                 p_resident_leave,
+                 p_microprovider_leave,
+                 p_use_coordinator,
+                 p_approach_random_micro,
+                 p_review_care,
+                 p_promote_micro,
+                 micro_quality_threshold,
+                 micro_join_coord,
+                 random_seed=None):  
         super().__init__()
+
+        self.random_seed = random_seed
+        # Set the random seed for reproducibility
+        if random_seed is not None:
+            self.random = random.Random(random_seed)
+        else:
+            self.random = random.Random()
+
+        # Initialize other model attributes here
 
         # Create a buffer to hold log messages
         self.log_buffer = StringIO()
@@ -700,8 +708,6 @@ class Care_Model(Model):
         self.logger.addHandler(buffer_handler)
 
         self.logger.propagate = False
-
-        # ... rest of your existing __init__ code ...
 
         # model variables
         self.num_resident_agents = N_RESIDENT_AGENTS
@@ -1052,6 +1058,10 @@ class Care_Model(Model):
         num = self.num_micros_approached_coordinator
         return num
     
+    def calc_num_microproviders(self):
+        """Calculate the total number of micro-providers in the model."""
+        return len(self.microprovider_agent_registry)
+    
     # microprovider functions for data collector
     def calc_allocated_residents(self):
         allocated_residents_total = []
@@ -1115,52 +1125,107 @@ class Care_Model(Model):
 
 '''function to run the model
 '''
+def run_care_model(params=None):
+    """
+    Run the Care_Model simulation using parameters from a dictionary.
 
-def run_care_model(n_residents=300, n_microproviders=30, n_unpaidcarers=0, 
-                   n_coordinators=0, width=12, height=12, n_steps=100):
-    # Parameters for running model
+    Dynamically add micro-providers until the percentage of residents receiving
+    help matches the HSE statistics.
+
+    Parameters:
+    -----------
+    params : dict, optional
+        A dictionary containing all the parameters required to initialize and run the model.
+        If None, default values will be used.
+
+    Returns:
+    --------
+    results : dict
+        A dictionary containing the model, data, and agent registries.
+    """
+    # Use default values if params is None
+    if params is None:
+        params = {}
+
+    # Initialize the model with a small number of micro-providers
     model = Care_Model(
-        N_RESIDENT_AGENTS=n_residents,
-        N_MICROPROVIDER_AGENTS=n_microproviders,
-        N_UNPAIDCARE_AGENTS=n_unpaidcarers,
-        N_COORDINATOR_AGENTS=n_coordinators,
-        width=width, 
-        height=height
+        N_RESIDENT_AGENTS=params.get("n_residents", 833),
+        N_MICROPROVIDER_AGENTS=params.get("n_microproviders", 1),  # Start with 1 micro-provider
+        N_UNPAIDCARE_AGENTS=params.get("n_unpaidcarers", 0),
+        N_COORDINATOR_AGENTS=params.get("n_coordinators", 0),
+        width=params.get("width", 12),
+        height=params.get("height", 12),
+        resident_care_need_min=params.get("resident_care_need_min", 1),
+        resident_care_need_max=params.get("resident_care_need_max", 20),
+        microprovider_care_cap_min=params.get("microprovider_care_cap_min", 5),
+        microprovider_care_cap_max=params.get("microprovider_care_cap_max", 40),
+        # to be standardised
+        p_resident_join=params.get("p_resident_join", 0.01),
+        p_microprovider_join=params.get("p_microprovider_join", 0.001),
+        p_resident_leave=params.get("p_resident_leave", 0.001),
+        p_microprovider_leave=params.get("p_microprovider_leave", 0.001),
+        # stay the same
+        p_use_coordinator=params.get("p_use_coordinator", 0.02),
+        p_approach_random_micro=params.get("p_approach_random_micro", 0.001),
+        p_review_care=params.get("p_review_care", 0.2),
+        p_promote_micro=params.get("p_promote_micro", 0.2),
+        micro_quality_threshold=params.get("micro_quality_threshold", 0.5),
+        micro_join_coord=params.get("micro_join_coord", 0.5),
+        random_seed=params.get("random_seed", 42)
     )
 
-    # Run the model for a certain number of steps
+    # Run the model for the specified number of steps
+    n_steps = params.get("n_steps", 100)
     for i in range(n_steps):
         model.step()
 
+        # Calculate the percentage of residents receiving help
+        total_residents = len(model.resident_agent_registry)
+        receiving_help = model.calc_receiving_care()
+        receiving_help_percentage = receiving_help / total_residents * 100
+
+        # Add micro-providers if the percentage is below the HSE statistic (18%)
+        if receiving_help_percentage < 18:
+            new_micro_id = max(model.microprovider_agent_registry.keys()) + 1
+            model._add_new_microprovider(new_micro_id)
+
+    # Collect data from the model
     data = model.datacollector.get_model_vars_dataframe()
 
     # Create resident registry DataFrame
     data_resident_registry = pd.DataFrame.from_dict(
-        model.resident_agent_registry, orient='index'
+        model.resident_agent_registry, orient="index"
     )
-    data_resident_registry.drop(columns=['agent_object'], inplace=True)
-    data_resident_registry.to_csv('resident_registry.csv', index=False)
+    data_resident_registry.drop(columns=["agent_object"], inplace=True)
 
     # Create microprovider registry DataFrame
     data_microprovider_registry = pd.DataFrame.from_dict(
-        model.microprovider_agent_registry, orient='index'
+        model.microprovider_agent_registry, orient="index"
     )
-    data_microprovider_registry.drop(columns=['agent_object'], inplace=True)
-    data_microprovider_registry.to_csv('microprovider_registry.csv', index=False)
+    data_microprovider_registry.drop(columns=["agent_object"], inplace=True)
 
     # Create coordinator registry DataFrame (if coordinators exist)
     if model.num_coordinator_agents > 0:
         data_coord_registry = pd.DataFrame.from_dict(
-            model.coordinator_agent_registry, orient='index'
+            model.coordinator_agent_registry, orient="index"
         )
-        data_coord_registry.drop(columns=['agent_object'], inplace=True)
-        data_coord_registry.to_csv('coordinator_registry.csv', index=False)
+        data_coord_registry.drop(columns=["agent_object"], inplace=True)
     else:
-        data_coord_registry = pd.DataFrame()  # Return an empty DataFrame if no coordinators
+        data_coord_registry = pd.DataFrame()
 
-    return model, data, data_resident_registry, data_microprovider_registry, data_coord_registry
+    # Return all results as a dictionary
+    return {
+        "model": model,
+        "data": data,
+        "data_resident_registry": data_resident_registry,
+        "data_microprovider_registry": data_microprovider_registry,
+        "data_coord_registry": data_coord_registry
+    }
 
-'''function to plot model data (not network)'''
+params = {"n_steps": 1000}
+
+results = run_care_model(params)
+
 def plot(data):
     fig, ax = plt.subplots(1,2, figsize=(15,6))
     data.plot(kind='line', y='number_of_micros_randomly_approached',ax=ax[0])
@@ -1177,3 +1242,7 @@ def plot(data):
 
     plt.tight_layout()
     return fig, ax
+
+print(results['data'])
+plot(results['data'])
+plt.show()

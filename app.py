@@ -39,7 +39,8 @@ with st.sidebar:
 # Home Page
 if page == "Welcome":
     st.header("Header")
-    st.write("This is the main landing page of the app.")
+    st.write("Welcome to the Micro-Providers Agent Based Simulation Streamlit app./" \
+    " You can navigate to different pages within the app using the sidebar.")
 
 elif page == "Introduction":
     st.header("Find and Answer Questions")
@@ -166,6 +167,7 @@ elif page == "About the Model":
         elif sub_tab == "Coordinator Step":
             coordinator_image_url = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/Coordinator_Step.drawio.png"
             st.image(coordinator_image_url, caption="Coordinator Agent Step Diagram")
+
     with tab3:
         st.subheader("Sources and Statistics")
         st.write("Sources of data and statistics used in the model.")
@@ -392,3 +394,7 @@ elif page == "Network Analysis":
     else:
         # Display a message if the simulation hasn't been run
         st.write("No simulation results found. Please run the simulation first.")
+
+elif page == "So, What Do You Think?":
+    st.header("Feedback")
+    st.write("Coming Soon!")

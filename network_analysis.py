@@ -244,36 +244,66 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
         Dictionary of node positions
     coordinators, microproviders, residents : list
         Lists of nodes by type for coloring
+    
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The matplotlib figure object for the network visualization
     """
-    plt.figure(figsize=(16, 12))
+    print("Visualize network function called")
+    fig, ax = plt.subplots(figsize=(16, 12))
     
     # Draw edges
-    nx.draw_networkx_edges(G, pos, edge_color='black', alpha=1)
+    nx.draw_networkx_edges(G, pos, edge_color='black', alpha=1, ax=ax)
     
     # Draw nodes by type
     nx.draw_networkx_nodes(G, pos, nodelist=coordinators, node_color='lightcoral',
-                          node_size=1500, node_shape='s', label='Coordinators')
+                           node_size=1500, node_shape='s', label='Coordinators', ax=ax)
     nx.draw_networkx_nodes(G, pos, nodelist=microproviders, node_color='lightblue',
-                          node_size=1200, node_shape='o', label='Microproviders')
+                           node_size=1200, node_shape='o', label='Microproviders', ax=ax)
     nx.draw_networkx_nodes(G, pos, nodelist=residents, node_color='lightgreen',
-                          node_size=800, node_shape='^', label='Residents')
+                           node_size=800, node_shape='^', label='Residents', ax=ax)
     
     # Add labels
     labels = {node: node for node in G.nodes()}
-    nx.draw_networkx_labels(G, pos, labels, font_size=8)
+    nx.draw_networkx_labels(G, pos, labels, font_size=8, ax=ax)
     
-    plt.title('Care System Network', fontsize=16, fontweight='bold')
-    plt.legend(scatterpoints=1)
-    plt.axis('off')
+    # Add title and legend
+    ax.set_title('Care System Network', fontsize=16, fontweight='bold')
+    ax.legend(scatterpoints=1)
+    ax.axis('off')
     plt.tight_layout()
-    plt.show()
+    
+    return fig
 
 '''calling functions'''
-# model, data, data_resident_registry,\
-#     data_microprovider_registry, data_coord_registry = run_care_model(
-#     n_residents=300, n_microproviders=30, n_unpaidcarers=0,
-#     n_coordinators=0, width=12, height=12, n_steps=100)
 
-# G, pos, coords, mps, res = create_network_graph(
-#     data_coord_registry, data_microprovider_registry, data_resident_registry)
-# visualize_network(G, pos, coords, mps, res)
+# from model import run_care_model
+
+# # Define parameters for the model
+# params = {
+#     "n_residents": 300,  # Example number of residents
+#     "n_microproviders": 10,  # Example number of microproviders
+#     "n_coordinators": 1,  # Example number of coordinators
+#     "annual_population_growth_rate": 0.011,  # 1.1% annual growth
+#     "p_resident_leave": 0.01,  # Probability of residents leaving
+#     "p_microprovider_leave": 0.01,  # Probability of microproviders leaving
+#     "num_years": 10,  # Number of years to simulate
+# }
+
+# # Run the care model
+# results = run_care_model(params)
+
+# # Extract data from the model results
+# coordinator_data = results.get("data_coord_registry", pd.DataFrame())
+# microprovider_data = results.get("data_microprovider_registry", pd.DataFrame())
+# resident_data = results.get("data_resident_registry", pd.DataFrame())
+
+# # Create the network graph
+# G, pos, coordinators, microproviders, residents = create_network_graph(
+#     coordinator_data, microprovider_data, resident_data
+# )
+
+# # Visualize the network
+# fig = visualize_network(G, pos, coordinators, microproviders, residents)
+# plt.show()

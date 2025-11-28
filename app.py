@@ -12,6 +12,7 @@ from datetime import datetime
 import networkx as nx
 import ast
 from collections import defaultdict
+from PIL import Image
 from mesa import Agent, Model
 from mesa.time import RandomActivation  # random order of agent actions
 from mesa.space import MultiGrid  # multiple agents per cell
@@ -154,14 +155,17 @@ elif page == "About the Model":
                         )
 
         if sub_tab == "Model Step":
-            st.write("Content for Model Step")
+            model_image_url = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/Model_Step.drawio.png"
+            st.image(model_image_url, caption="Model Step Diagram")
         elif sub_tab == "Resident Step":
-            st.write("Content for Resident Step")
+            resident_image_url = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/Resident_Step.drawio.png"
+            st.image(resident_image_url, caption="Resident Agent Step Diagram")
         elif sub_tab == "Micro-Provider Step":
-            st.write("Content for Micro-Provider Step")
+            microprovider_image_url = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/Micro-Provider_Step.drawio.png"
+            st.image(microprovider_image_url, caption="Micro-Provider Agent Step Diagram")
         elif sub_tab == "Coordinator Step":
-            st.write("Content for Coordinator Step")
-
+            coordinator_image_url = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/Coordinator_Step.drawio.png"
+            st.image(coordinator_image_url, caption="Coordinator Agent Step Diagram")
     with tab3:
         st.subheader("Sources and Statistics")
         st.write("Sources of data and statistics used in the model.")
@@ -234,7 +238,7 @@ elif page == "Run the Model":
     with tab1:
 
         # Load the CSV file
-        csv_path = "c:/Users/James/Downloads/Desktop/HSMA_ABS/SouthSomParish_65_Figs.csv"
+        csv_path = "https://raw.githubusercontent.com/houjamr/HSMA_ABS/refs/heads/main/SouthSomParish_65_Figs.csv"
         df = pd.read_csv(csv_path, skiprows=6)  # Skip metadata rows at the top
         df.columns = df.columns.str.strip().str.replace('"', '')
         df = df.drop(index=1)
@@ -356,11 +360,15 @@ elif page == "Model Results":
         st.write("No simulation results found. Please run the simulation first.")
 
 elif page == "Network Analysis":
+    st.header("Network Analysis")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.header("Network Analysis (Coordinatnor)")
-        if "results_with_coordinator" in st.session_state:
+    # Check if the simulation has been run
+    if "results_with_coordinator" in st.session_state and "results_without_coordinator" in st.session_state:
+        col1, col2 = st.columns(2)
+
+        # Network Analysis with Coordinator
+        with col1:
+            st.subheader("Network Analysis (With Coordinator)")
             results_with_coordinator = st.session_state["results_with_coordinator"]
             G, pos, coordinators, microproviders, residents = create_network_graph(
                 results_with_coordinator["data_coord_registry"],
@@ -369,10 +377,10 @@ elif page == "Network Analysis":
             )
             fig = visualize_network(G, pos, coordinators, microproviders, residents)
             st.pyplot(fig)
-            
-    with col2:
-        st.header("Coordinator Registry (Without Coordinator)")
-        if "results_with_coordinator" in st.session_state:
+
+        # Network Analysis without Coordinator
+        with col2:
+            st.subheader("Network Analysis (Without Coordinator)")
             results_without_coordinator = st.session_state["results_without_coordinator"]
             G, pos, coordinators, microproviders, residents = create_network_graph(
                 results_without_coordinator["data_coord_registry"],
@@ -381,3 +389,6 @@ elif page == "Network Analysis":
             )
             fig = visualize_network(G, pos, coordinators, microproviders, residents)
             st.pyplot(fig)
+    else:
+        # Display a message if the simulation hasn't been run
+        st.write("No simulation results found. Please run the simulation first.")

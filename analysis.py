@@ -32,10 +32,11 @@ def prepare_visualization_data(results):
     model = results['model']
 
     # Get the warming-up step
-    warming_up_step = model.warming_up_step + 1
+    # warming_up_step = model.warming_up_step + 1
+    buffer_end_step = model.buffer_end_step + 1
 
     # Drop rows before the warming-up step
-    data_after_warmup = data.loc[warming_up_step:].copy()
+    data_after_warmup = data.loc[buffer_end_step:].copy()
 
     data_after_warmup.reset_index(drop=True, inplace=True)
 
@@ -146,17 +147,11 @@ params_with_coordinator = {
     "p_random_micro_join": 0.5  # 10% chance per step
 }
 
-results_with_coordinator = run_care_model(params_with_coordinator)
+# results_with_coordinator = run_care_model(params_with_coordinator)
 
-# Prepare the data for visualization
-data_with_coordinator = prepare_visualization_data(
-    results_with_coordinator)
-
-plot(data_with_coordinator)
-
-plt.show()
-
-
+# # Prepare the data for visualization
+# data_with_coordinator = prepare_visualization_data(
+#     results_with_coordinator)
 
 
 

@@ -252,30 +252,43 @@ elif page == "Run the Model":
         selected_parish = st.selectbox("Select a Parish", df["2022 parish"].unique())
 
         # Extract the population for the selected parish
-        selected_population = df[df["2022 parish"] == selected_parish]\
-            ["Aged 65 years and over"].values[0]
+        selected_population = int(df[df["2022 parish"] == selected_parish]["Aged 65 years and over"].values[0])
 
         # Display the selected parish and population
         st.write(f"Selected Parish: {selected_parish}")
         st.write(f"Population Size: {int(selected_population)}")
 
+        # Add a warning if the population size is large
+        LARGE_POPULATION_THRESHOLD = 1500  # Define the threshold for a large population
+        if selected_population > LARGE_POPULATION_THRESHOLD:
+            st.warning(
+                f"The selected parish has a population of {int(selected_population)}, "
+                "This will take a long time to load. Consider selecting a parish "
+                "with a population less than 1500."
+            )
+        MEDIUM_POPULATION_THRESHOLD = 800  # Define the threshold for a medium population
+        if selected_population > MEDIUM_POPULATION_THRESHOLD and selected_population <= LARGE_POPULATION_THRESHOLD:
+            st.info(
+                f"The selected parish has a population of {int(selected_population)}, "
+                "depending on the number of years you are simulating, this may "
+                "take a while to load."
+            )
+        # Define parameters
         params = {
-            "n_residents": int(selected_population), # Use the selected population
-                                "num_years": st.slider(
-                "Number of Years to Simulate", 1, 15, 10 
-            ),       
+            "n_residents": int(selected_population),  # Use the selected population
+            "num_years": st.slider("Number of Years to Simulate", 1, 15, 10),
         }
-        
+
     # Advanced Parameters
     with tab2:
         st.subheader("Advanced Parameters")
         advanced_params = {
-                        "n_residents": int(selected_population),  # Use the selected population
+            "n_residents": int(selected_population),  # Use the selected population
 
             "annual_population_growth_rate": st.slider(
                 "Annual Population Growth Rate (%)", 0.0, 5.0, 1.1, 0.1
             ) / 100,
-            
+
             "p_resident_leave": st.slider(
                 "Probability Resident Leaves the Model (Per Step)", 0.0, 1.0, 0.01, 0.01
             ),
@@ -320,25 +333,28 @@ elif page == "Run the Model":
 
     # Add a button to run the simulation with and without a coordinator
     if st.button("Run Simulation"):
-        st.write("Running the care model simulation...")
+        with st.spinner("Running the care model simulation..."):
+            # Run the simulation with a coordinator
+            params["n_coordinators"] = 1  # Set coordinators to 1
+            st.write("Running simulation with coordinator...")
+            results_with_coordinator = run_care_model(params)
+            st.write("Simulation with coordinator complete. Preparing visualization data...")
+            data_with_coordinator = prepare_visualization_data(results_with_coordinator)
+            st.write("Visualization data prepared, running simulation without coordinator...")
 
-        # Run the simulation with a coordinator
-        params["n_coordinators"] = 1  # Set coordinators to 1
-        results_with_coordinator = run_care_model(params)
-        data_with_coordinator = prepare_visualization_data(results_with_coordinator)
+            # Run the simulation without a coordinator
+            params["n_coordinators"] = 0  # Set coordinators to 0
+            results_without_coordinator = run_care_model(params)
+            st.write("Simulation without coordinator complete. Preparing visualization data...")
+            data_without_coordinator = prepare_visualization_data(results_without_coordinator)
 
-        # Run the simulation without a coordinator
-        params["n_coordinators"] = 0  # Set coordinators to 0
-        results_without_coordinator = run_care_model(params)
-        data_without_coordinator = prepare_visualization_data(results_without_coordinator)
+            # Store results and data in session state
+            st.session_state["results_with_coordinator"] = results_with_coordinator
+            st.session_state["data_with_coordinator"] = data_with_coordinator
+            st.session_state["results_without_coordinator"] = results_without_coordinator
+            st.session_state["data_without_coordinator"] = data_without_coordinator
 
-        # Store results and data in session state
-        st.session_state["results_with_coordinator"] = results_with_coordinator
-        st.session_state["data_with_coordinator"] = data_with_coordinator
-        st.session_state["results_without_coordinator"] = results_without_coordinator
-        st.session_state["data_without_coordinator"] = data_without_coordinator
-
-        st.write("Simulation complete!")
+        st.success("Simulation complete!")
 
 elif page == "Model Results":
     st.header("Simulation Results")

@@ -667,20 +667,16 @@ class Care_Model(Model):
                  p_promote_micro,
                  micro_quality_threshold,
                  micro_join_coord,
-    
+                 buffer_steps=200,  # Default buffer period
                  random_seed=None,
                  annual_population_growth_rate=0.011):  # Add annual growth rate
         super().__init__()
 
-        # Store the new parameter
-       
-
         self.random_seed = random_seed
         # Set the random seed for reproducibility
         if random_seed is not None:
-            self.random = random.Random(random_seed)
-        else:
-            self.random = random.Random()
+            random.seed(random_seed)
+            np.random.seed(random_seed)
 
         # Create a buffer to hold log messages
         self.log_buffer = StringIO()
@@ -698,12 +694,7 @@ class Care_Model(Model):
         if self.logger.hasHandlers():
             self.logger.handlers.clear()
 
-        # Create a handler that writes to the buffer
-        buffer_handler = logging.StreamHandler(self.log_buffer)
-        formatter = logging.Formatter('%(message)s')
-        buffer_handler.setFormatter(formatter)
         self.logger.addHandler(buffer_handler)
-
         self.logger.propagate = False
 
         # model variables
@@ -732,7 +723,7 @@ class Care_Model(Model):
 
         # controlling resident growth
         self.residents_leaving = 0
-        self.annual_population_growth_rate = 0
+        self.annual_population_growth_rate = annual_population_growth_rate
         self.p_resident_leave = p_resident_leave
         self.p_microprovider_leave = p_microprovider_leave
         self.p_microprovider_join = p_microprovider_join
@@ -747,11 +738,30 @@ class Care_Model(Model):
         self.step_micros_approached_recommended = 0
         self.step_micros_approached_carer_recommended = 0
         self.step_micros_approached_coordinator = 0
-        #initialise agent registries
+        # initialise agent registries
         self.resident_agent_registry = {}
         self.microprovider_agent_registry = {}
         self.unpaidcarer_agent_registry = {}
         self.coordinator_agent_registry = {}
+
+        # placing coordinator agent
+        for i in range(self.num_coordinator_agents):
+            a = Coordinator_Agent(i, self)
+            self.schedule.add(a)
+            self.coordinator_agent_registry[i] = {
+                'agent_object': a,
+                'agent_id': i,
+                'registered_microproviders': [],
+                'micro_quality_threshold': a.micro_quality_threshold
+            }
+
+            # Place the coordinator at the center of the grid
+            center_x = self.grid.width // 2
+            center_y = self.grid.height // 2
+            self.grid.place_agent(a, (center_x, center_y))
+
+            # Update the coordinator's position in the registry
+            self.coordinator_agent_registry[a.unique_id]['pos'] = a.pos
 
         # adding resident agents
         for i in range(self.num_resident_agents):
@@ -780,60 +790,7 @@ class Care_Model(Model):
                 self.grid.place_agent(a, (x,y))
             # print(f'placed resident agent {a.pos}')
 
-        # adding micro-provider agents
-        for i in range(self.num_microprovider_agents):
-            a = MicroProvider_Agent(i, self)
-            self.schedule.add(a)
-            self.microprovider_agent_registry[i] = {
-                'agent_object': a,
-                'agent_id': i,
-                'agent_care_capacity' : a.care_capacity,
-                'micro_quality': a.micro_quality,
-                'has_capacity': True,
-                'allocated_residents': [],
-                'packages_of_care_delivered': []
-            }
-
-            try:
-                start_cell = self.grid.find_empty()
-                self.grid.place_agent(a, start_cell)
-            except:
-                x = random.randrange(self.grid.width)
-                y = random.randrange(self.grid.height)
-                self.grid.place_agent(a, (x,y))
-         
-        # adding unpaid carer agents
-        for i in range(self.num_unpaidcare_agents):
-            a = UnpaidCare_Agent(i, self)
-            self.schedule.add(a)
-            self.unpaidcarer_agent_registry[i] = {
-                'agent_object': a,
-                'agent_id': i,
-                'agent_care_capacity': a.generate_care_capacity,
-                'has_capacity': a.has_capacity,
-                'residents': [],
-                'unpaidcare_delivered': [],
-                'microproviders_to_recommend': []
-            }
-
-            try:
-                start_cell = self.grid.find_empty()
-                self.grid.place_agent(a, start_cell)
-            except:
-                x = random.randrange(self.grid.width)
-                y = random.randrange(self.grid.height)
-                self.grid.place_agent(a, (x,y))
-
-        # adding coordinator agents
-        for i in range(self.num_coordinator_agents):
-            a = Coordinator_Agent(i, self)
-            self.schedule.add(a)
-            self.coordinator_agent_registry[i] = {
-                'agent_object': a,
-                'agent_id': i,
-                'registered_microproviders': [],
-                'micro_quality_threshold': a.micro_quality_threshold
-            }
+            self.resident_agent_registry[a.unique_id]['pos'] = a.pos
 
         # adding datacollector to model
         self.datacollector = DataCollector(
@@ -859,6 +816,12 @@ class Care_Model(Model):
         self.warming_up = True
         self.warming_up_step = None
 
+        '''xxx Buffer period setup xxx'''
+        self.buffer_steps = buffer_steps
+        self.buffer_active = False  # Flag to track buffer period
+        self.buffer_step_count = 0  # Counter for buffer steps
+        self.buffer_end_step = None
+
         self.annual_population_growth_rate = annual_population_growth_rate
         self.weekly_population_growth_rate = (1 + annual_population_growth_rate) ** (1/52) - 1
 
@@ -867,6 +830,9 @@ class Care_Model(Model):
         Increase the number of residents based on the weekly population growth rate
         and the number of residents leaving the model.
         """
+        if self.warming_up or self.buffer_active:
+            return
+        
         # Calculate the exact number of new residents to add for net growth
         exact_growth = self.num_resident_agents * self.weekly_population_growth_rate
         net_growth = int(exact_growth)  # Integer part of the growth
@@ -892,6 +858,10 @@ class Care_Model(Model):
         Check if the warming-up condition is met.
         The warming-up period ends when 18% of residents are receiving care.
         """
+        if not self.warming_up:
+            return
+
+        # Calculate the percentage of residents receiving care
         total_residents = len(self.resident_agent_registry)
         receiving_care = self.calc_receiving_care()
         receiving_care_percentage = receiving_care / total_residents * 100
@@ -909,7 +879,28 @@ class Care_Model(Model):
             self.warming_up = False
             self.logger.info(f"Warming-up period ended on step {self.step_count}")
 
-            # Reset aggregate counters
+            self.buffer_active = True
+            self.logger.info(f"Buffer phase activated at step {self.step_count}")
+
+    def check_buffer_active(self):
+        """
+        Check and update the buffer state.
+        This method handles the logic for the buffer period and updates the buffer_active flag.
+        """
+        if not self.buffer_active:
+            self.logger.info(f"Buffer is not active at step {self.step_count}")
+            return
+
+        self.buffer_step_count += 1
+        self.logger.info(f"Buffer Step Count: {self.buffer_step_count}")
+
+        if self.buffer_step_count >= self.buffer_steps:
+            self.buffer_active = False
+            self.logger.info(f"Buffer period ended at step {self.step_count}")
+            if self.buffer_end_step is None:
+                self.buffer_end_step = self.step_count
+
+            # Reset counters after the buffer period ends
             self.num_micros_approached_randomly = 0
             self.num_micros_approached_recommended = 0
             self.num_micros_approached_carer_recommended = 0
@@ -921,7 +912,7 @@ class Care_Model(Model):
             self.step_micros_approached_carer_recommended = 0
             self.step_micros_approached_coordinator = 0
 
-            self.logger.info("Micro-provider approach counters have been reset.")
+            self.logger.info("Counters have been reset after the buffer period.")
 
     # Functions to access logs
     def print_logs(self):
@@ -939,7 +930,7 @@ class Care_Model(Model):
         """
         Add new micro-providers during warming-up based on the care threshold
         and after warming-up based on a small random chance.
-        """
+        """ 
         # During warming-up: Add microproviders if care percentage is below the threshold
         if self.warming_up:
             total_residents = len(self.resident_agent_registry)
@@ -959,8 +950,11 @@ class Care_Model(Model):
                     self._add_new_microprovider(new_id)
                     self.logger.info(f"Microprovider {new_id} added during warming-up.")
 
+        if self.buffer_active:
+            return
+        
         # After warming-up: Add microproviders randomly
-        if not self.warming_up and random.random() < self.p_microprovider_join:  # Updated parameter name
+        if not self.warming_up and not self.buffer_active and random.random() < self.p_microprovider_join:  # Updated parameter name
             new_id = max(self.microprovider_agent_registry.keys(), default=0) + 1
             self._add_new_microprovider(new_id)
             self.logger.info(f"Microprovider {new_id} joined the model randomly.")
@@ -990,6 +984,8 @@ class Care_Model(Model):
             y = random.randrange(self.grid.height)
             self.grid.place_agent(a, (x,y))
         
+        self.resident_agent_registry[a.unique_id]['pos'] = a.pos
+
         self.num_resident_agents += 1
         self.logger.info(
             f"New Resident {new_id} joined with {a.care_needs} care needs")
@@ -1014,7 +1010,9 @@ class Care_Model(Model):
             x = random.randrange(self.grid.width)
             y = random.randrange(self.grid.height)
             self.grid.place_agent(a, (x,y))
-            
+
+        self.microprovider_agent_registry[a.unique_id]['pos'] = a.pos
+
         self.num_microprovider_agents += 1
         self.logger.info(
             f"New Microprovider {new_id} joined with {a.care_capacity}")
@@ -1111,7 +1109,7 @@ class Care_Model(Model):
             'blacklisted_microproviders': agent.blacklisted_microproviders,
             'microproviders_to_recommend': agent.microproviders_to_recommend,
             'unpaidcarers': agent.unpaidcarers,
-            'unpaidcare_rec': agent.unpaidcare_rec
+            'unpaidcare_rec': agent.unpaidcare_rec,
         })
 
     def _update_unpaidcarer_registry(self, agent):
@@ -1160,7 +1158,6 @@ class Care_Model(Model):
                 count_receiving_care += 1
         return count_receiving_care
 
-    # Add this method to the Care_Model class
     def calc_avg_packages_of_care(self):
         """
         Calculate the average number of packages of care received by residents
@@ -1201,7 +1198,7 @@ class Care_Model(Model):
         num_residents = len(self.resident_agent_registry)
         return total_connections / num_residents if num_residents > 0 else 0
 
-    # Add this method to the Care_Model class
+    ## redundant?
     def calc_coordinator_register_size(self):
         """
         Calculate the size of the coordinator's register.
@@ -1218,8 +1215,9 @@ class Care_Model(Model):
         self.logger.info(f"Model step {self.step_count}")
 
         # Check if the warming-up condition is met
-        if self.warming_up:
-            self.check_warming_up()
+        self.check_warming_up()
+
+        self.check_buffer_active()
 
         # Add new agents during warming-up or randomly after warming-up
         self.add_new_agents()
@@ -1271,12 +1269,12 @@ def run_care_model(params=None):
     # Initialize the model
     model = Care_Model(
         N_RESIDENT_AGENTS=params.get("n_residents", 833),
-        N_MICROPROVIDER_AGENTS=params.get("n_microproviders", 1),
+        N_MICROPROVIDER_AGENTS=params.get("n_microproviders", 0),
         N_UNPAIDCARE_AGENTS=params.get("n_unpaidcarers", 0),
         N_COORDINATOR_AGENTS=params.get("n_coordinators", 1),
         # grid and misc
-        width=params.get("width", 12),
-        height=params.get("height", 12),
+        width=params.get("width", 50),
+        height=params.get("height", 50),
         random_seed=params.get("random_seed", 42),
         # Care needs and capacities
         resident_care_need_min=params.get("resident_care_need_min", 1),
@@ -1298,6 +1296,9 @@ def run_care_model(params=None):
 
     # Run the model until the warming-up phase ends
     while model.warming_up:
+        model.step()
+
+    while model.buffer_active:
         model.step()
 
     # Calculate the total number of steps to run after warming-up
@@ -1346,5 +1347,29 @@ def run_care_model(params=None):
         "data_coord_registry": data_coord_registry,
     }
 
-# results = run_care_model(params={"num_years": 2})
-# results["model"].print_logs()
+# results = run_care_model(params={"num_years": 5,"n_residents": 833})
+
+# print(results['data_resident_registry']['pos'])
+# print(type(results['data_resident_registry'].iloc[1]['pos']))
+
+# print(results['data_microprovider_registry']['pos'])
+
+# print(results['data_coord_registry']['pos'])
+# # import time
+# import psutil
+
+# def get_memory_usage_mb():
+#     """Get the current memory usage of the process in megabytes."""
+#     process = psutil.Process()
+#     mem_info = process.memory_info()
+#     return mem_info.rss / (1024 * 1024)  # Convert bytes to megabytes
+
+# start_mem_6000 = get_memory_usage_mb()
+# start_time_6000 = time.time()
+# results = run_care_model(params={"num_years": 15,"n_residents": 6000})
+# end_time_6000 = time.time()
+# end_mem_6000 = get_memory_usage_mb()
+# print(f"Simulation with 6000 residents took {end_time_6000 - start_time_6000} seconds")
+# print(f"Memory usage before simulation: {start_mem_6000} MB")
+# print(f"Memory usage after simulation: {end_mem_6000} MB")
+# print(results['model'].warming_up_step)

@@ -33,6 +33,7 @@ with st.sidebar:
                         "About the Model",
                         "Run the Model",
                         "Model Results",
+                        "Agent Registries",
                         "Network Analysis",
                         "So, What Do You Think?"]
                     )
@@ -376,6 +377,46 @@ elif page == "Model Results":
             st.pyplot(fig_without_coordinator)
     else:
         st.write("No simulation results found. Please run the simulation first.")
+
+elif page == "Agent Registries":
+    if "results_with_coordinator" in st.session_state and\
+        "results_without_coordinator" in st.session_state:
+        tab1, tab2 = st.tabs(["With Coordinator", "Without Coordinator"])
+
+        with tab1:
+            results_with_coordinator = st.session_state["results_with_coordinator"]
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Micro-Provider Registry")
+                microprovider_registry_df = pd.DataFrame(results_with_coordinator["data_microprovider_registry"])
+                st.dataframe(microprovider_registry_df)
+
+            with col2:
+                st.subheader("Resident Registry")
+                resident_registry_df = pd.DataFrame(results_with_coordinator["data_resident_registry"])
+                resident_registry_df.drop(columns=['microproviders_to_recommend',
+                                                    'blacklisted_microproviders',
+                                                    'unpaidcarers',
+                                                    'unpaidcare_rec'], inplace=True)
+                st.dataframe(resident_registry_df)
+
+        with tab2:
+            col1, col2 = st.columns(2)
+            results_without_coordinator = st.session_state["results_without_coordinator"]
+            with col1:
+                st.subheader("Micro-Provider Registry")
+                microprovider_registry_df = pd.DataFrame(results_without_coordinator["data_microprovider_registry"])
+                st.dataframe(microprovider_registry_df)
+
+            with col2:
+                st.subheader("Resident Registry")
+                resident_registry_df = pd.DataFrame(results_without_coordinator["data_resident_registry"])
+                resident_registry_df.drop(columns=['microproviders_to_recommend',
+                                                    'blacklisted_microproviders',
+                                                    'unpaidcarers',
+                                                    'unpaidcare_rec'], inplace=True)
+                st.dataframe(resident_registry_df)
+        
 
 elif page == "Network Analysis":
     st.header("Network Analysis")

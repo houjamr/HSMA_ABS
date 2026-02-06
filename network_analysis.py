@@ -199,7 +199,7 @@ def create_network_graph(coordinator_data, microprovider_data, resident_data):
     microproviders = []
     residents = []
     for rel in relationships:
-        for entity in [rel['entity1'], rel['entity2']]:
+        for entity in rel['entity1'], rel['entity2']:
             if entity not in nodes_added:
                 if entity.startswith('C'):
                     G.add_node(
@@ -330,9 +330,27 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
     nx.draw_networkx_labels(G, pos, labels, font_size=10, ax=ax)
 
     # Add title and legend
-    ax.set_title('Care System Network', fontsize=16, fontweight='bold')
-    ax.legend(scatterpoints=1)
-    ax.axis('off')
-    plt.tight_layout()
+    ax.set_title('Care System Network', fontsize=16, fontweight='bold', pad=30)
+    # Adjust legend to be between the title and the network figure
+    legend = ax.legend(scatterpoints=1, fontsize=12, loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=3)
+    legend.set_title('Legend', prop={'size': 14})
+
+    # Reduce the size of markers in the legend
+    for handle in legend.legend_handles:
+        if hasattr(handle, 'set_sizes'):
+            handle.set_sizes([40])  # Reduce marker size
+        elif hasattr(handle, 'set_width') and hasattr(handle, 'set_height'):
+            handle.set_width(0.5)  # Reduce polygon width
+            handle.set_height(0.5)  # Reduce polygon height
+
+    # Add a horizontal color bar to indicate the scale of connectivity for microproviders
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=plt.Normalize(vmin=min(microprovider_degrees.values()), vmax=max(microprovider_degrees.values())))
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, orientation='horizontal', pad=0.1)
+    cbar.set_label('Microprovider Connectivity', fontsize=16, fontweight='bold')
+
+    # Remove the border from the figure
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
     return fig

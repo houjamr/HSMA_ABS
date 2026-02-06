@@ -1,3 +1,4 @@
+from pyexpat import model
 import mesa
 import numpy as np
 import pandas as pd
@@ -38,7 +39,7 @@ class Resident_Agent(Agent):
         self.care_needs_met = False
         # initate residents care needs self.care_needs
         self.initiate_care_needs()
-        # initiate micro quality threshold self.micro_quality_threshold
+        # initiate micro quality threshold
         self.initiate_micro_quality_threshold()
 
     # functions to initiate care needs
@@ -78,8 +79,8 @@ class Resident_Agent(Agent):
             return False
             
         random_microprovider_id = random.choice(available_providers)
-        random_microprovider = self.model.microprovider_agent_registry[
-            random_microprovider_id]['agent_object']
+        random_microprovider = self.model.microprovider_agent_registry\
+            [random_microprovider_id]['agent_object']
         
         if self.contract_microprovider(random_microprovider_id, random_microprovider):
             self.model.num_micros_approached_randomly += 1
@@ -169,8 +170,10 @@ class Resident_Agent(Agent):
         return False
     
     # checks if the model running with an active coordinator?
+    '''look at this again'''
+
     def has_active_coordinator(self):
-        if self.model.step_count < 0:  # Check step count
+        if self.model.step_count < 0:
             return False
     
         return (self.model.num_coordinator_agents > 0 and 
@@ -244,29 +247,42 @@ class Resident_Agent(Agent):
     # function for actually contracting the microprovider (used inside of 
     # attempt to contract with eligible micro_provider)
     def contract_microprovider(self, micro_id, micro_provider):
+        """
+        Attempt to contract a microprovider. If the selected microprovider
+        doesn't have capacity, try one of their peers.
+        """
         # Early returns for invalid conditions
         if micro_id in self.blacklisted_microproviders:
             return False
-            
+
         if micro_provider.micro_quality < self.micro_quality_threshold:
             return False
-            
+
         if not micro_provider.has_capacity:
+            self.model.logger.info(
+                f"Microprovider {micro_id} has no capacity. Trying peers."
+            )
+            # Try peers of the microprovider
+            random.shuffle(micro_provider.microprovider_peers)
+            for peer_id in micro_provider.microprovider_peers:
+                if peer_id not in self.blacklisted_microproviders:
+                    peer = self.model.microprovider_agent_registry[peer_id]['agent_object']
+                    if peer.has_capacity and peer.micro_quality >= self.micro_quality_threshold:
+                        return self.contract_microprovider(peer_id, peer)
             return False
-            
+
         if micro_id in self.microproviders:
             return False
-            
+
         # Calculate care package size
         care_delivered = self._calculate_care_package(micro_id)
-        
-        self._update_resident_records(micro_provider, care_delivered)
-        
-        self._update_microprovider_records(micro_provider, care_delivered)
-        
-        return True
 
-    # function used in contract_microprovider to calculate the care package
+        self._update_resident_records(micro_provider, care_delivered)
+
+        self._update_microprovider_records(micro_provider, care_delivered)
+
+        return True
+    
     def _calculate_care_package(self, micro_id):
         max_capacity = self.model.microprovider_agent_registry[micro_id]\
         ['agent_care_capacity']
@@ -338,10 +354,10 @@ class Resident_Agent(Agent):
             f"Resident {self.unique_id} is unsatisfied with care from "
             f"Microprovider {micro} and has ended the care relationship"
         )
-
+    
     def promote_microprovider(self):
         """
-        Promote recommended microproviders to nearby residents.
+        Promote recommended microproviders o nearby residents.
         
         Finds nearby residents in the same cell and shares microprovider 
         recommendations with them if they haven't blacklisted those providers.
@@ -362,19 +378,19 @@ class Resident_Agent(Agent):
         resident_to_chat = self.model.resident_agent_registry[resident_id]\
         ['agent_object']
 
-        num_to_share = min(
-            random.randint(1, 2), len(self.microproviders_to_recommend))
-        selected_micros = random.sample(
-            self.microproviders_to_recommend, num_to_share)
-        
-        # Share recommendations
-        for micro in selected_micros:
-            if (micro not in resident_to_chat.blacklisted_microproviders):
-                resident_to_chat.microproviders_to_recommend.append(micro)
-                self.model.logger.info(
+        # Select a single random microprovider to recommend
+        micro = random.choice(self.microproviders_to_recommend)
+        micro_object = self.model.microprovider_agent_registry[micro]['agent_object']
+
+        # Share the recommendation
+        if (micro not in resident_to_chat.blacklisted_microproviders and
+            micro not in resident_to_chat.microproviders_to_recommend and
+            micro_object.micro_quality >= resident_to_chat.micro_quality_threshold):  # Check quality threshold
+            resident_to_chat.microproviders_to_recommend.append(micro)
+            self.model.logger.info(
                 f"Resident {self.unique_id} promoted Microprovider {micro} "
                 f"to Resident {resident_to_chat.unique_id}")
-        
+            
     def _try_find_care(self):
             """Attempt to find care through various channels in priority order.
             
@@ -385,11 +401,7 @@ class Resident_Agent(Agent):
             if self.microproviders_to_recommend:
                 if self.check_recommended_microproviders():
                     return True
-                
-            # Try unpaid carer recommendations next
-            if self.check_unpaidcarers_microproviders():
-                return True
-                
+                                
             # Small chance to use coordinator
             if random.random() < self.model.p_use_coordinator:
                 if self.coord_care_brokerage():
@@ -422,13 +434,16 @@ class Resident_Agent(Agent):
                 
         self._periodic_care_review()
 
- #MicroProvider Agent   
+        if len(self.microproviders_to_recommend) > 0 and self.model.step_count % 20:
+            self.microproviders_to_recommend.pop(0)
 
+ #MicroProvider Agent   
 class MicroProvider_Agent(Agent):
     # constructor
     def __init__(self, unique_id, model):
         super().__init__(unique_id, model)
         self.residents = []
+        self.microprovider_peers = []
         self.packages_of_care = []
         self.has_capacity = True
         self.initiate_care_capacity()
@@ -449,36 +464,26 @@ class MicroProvider_Agent(Agent):
             self.has_capacity = True
 
     def register_with_coordinator(self):
-        """Attempt to register microprovider with coordinator if eligible.
-        Registers with coordinator if:
-        1. Coordinator exists
-        2. Not already registered
-        3. Has at least one resident
-        4. Meets quality threshold
-        """
         if not self.model.num_coordinator_agents:
             return
             
         coordinator_registry = self.model.coordinator_agent_registry[0]
         
-        if (self.unique_id not in coordinator_registry\
-        ['registered_microproviders'] and len(self.residents) >= 1 and
-        self.micro_quality >= coordinator_registry['micro_quality_threshold']):
-            
-            coordinator_registry['registered_microproviders'].\
-                append(self.unique_id)
-            self.model.logger.info(f"Microprovider {self.unique_id} registered "
-                                   "with the Coordinator")
+        if self.unique_id not in coordinator_registry['registered_microproviders']:
+            if self.model.coordinator_has_threshold and\
+            self.micro_quality >= coordinator_registry['coord_micro_quality_threshold']:
+                coordinator_registry['registered_microproviders'].append(self.unique_id)
+            if not self.model.coordinator_has_threshold:
+                coordinator_registry['registered_microproviders'].append(self.unique_id)
 
     def step(self):
         self.decide_capacity()
 
-        if self.model.num_coordinator_agents > 0 and\
-            self.unique_id not in self.model.coordinator_agent_registry[0]\
-                ['registered_microproviders']:
-            if random.random() < self.model.micro_join_coord:
+        if random.random() < self.model.micro_join_coord:
                 self.register_with_coordinator()
 
+        if len(self.microprovider_peers) > 0 and self.model.step_count % 4:
+            self.microprovider_peers.pop(0)
 '''
 Unpaid Care Agent not used
 '''
@@ -641,10 +646,113 @@ class Coordinator_Agent(Agent):
     def __init__(self, unique_id, model):
         super().__init__(unique_id, model)
         self.registered_microproviders = []
-        self.micro_quality_threshold = self.model.micro_quality_threshold
+        self.coord_micro_quality_threshold = 0.5
+        self.coordinator_has_threshold = self.model.coordinator_has_threshold
+
+    # function that toggles if a coordinator uses the target quality threshold to
+    #  decide whether to register a microprovider or not
+        # microprovider function checks whether coordinator has quality threshold value enabled
+
+    def microprovider_outreach(self):
+        unregistered_microproviders = [mp for mp in self.model.microprovider_agent_registry.keys()
+                                       if mp not in self.registered_microproviders]
+        if unregistered_microproviders:
+            target_microprovider_id = random.choice(unregistered_microproviders)
+            target_microprovider = self.model.microprovider_agent_registry[target_microprovider_id]['agent_object']
+
+            if self.coordinator_has_threshold:
+                if target_microprovider.micro_quality >= self.coord_micro_quality_threshold:
+                    self.registered_microproviders.append(target_microprovider.unique_id)
+                else:
+                    target_microprovider.micro_quality = min(target_microprovider.micro_quality + 0.05, 1.0)
+            if not self.coordinator_has_threshold:
+                self.registered_microproviders.append(target_microprovider.unique_id)
+        else:
+            self.model.logger.info("No unregistered microproviders available for outreach.")
+
+    # function where a coordinator does outreach work with microproviders in the model
+    # to encourage them to register/improve there quality rating
+        # p chance coordintator does outreach work each step, if microprovider
+        # passess threshold, recruit, otherwise improve rating by 0.05
+        # (rating of a mp cannot exceed 1)
+        
+    # function where coordinator runs a microprovider peer support group
+        # function where coordinator collects mps
+
+    # function where coordinator runs a resident peer spport group to encourage
+    # sharing of microprovider recommendations
+        # collect n residents, residents share recommendations
+        # if residents microprovider threshold is less than coorindator, add to
+        # match but not exceed the threshold of the coordinator group.
+
+    def run_microprovider_peer_support_group(self):
+        if not self.registered_microproviders:
+            self.model.logger.info("No registered microproviders to run a peer support group.")
+            return
+        
+        micros_attending = []
+
+        for micro_id in self.registered_microproviders:
+            if random.random() < self.model.p_micro_support_attendance:  # Probability check for attendance
+                micro = self.model.microprovider_agent_registry[micro_id]['agent_object']
+                # Encourage improvement in quality, capped at 1.0
+                micro.micro_quality = min(micro.micro_quality + 0.05, 1.0)
+                micros_attending.append(micro_id)
+
+        for micro_id in micros_attending:
+            micro = self.model.microprovider_agent_registry[micro_id]['agent_object']
+            for peer_id in micros_attending:
+                if peer_id != micro_id and peer_id not in micro.microprovider_peers:
+                    micro.microprovider_peers.append(peer_id)
+                    self.model.logger.info(
+                        f"Microprovider {micro_id} added Microprovider {peer_id} to their peers list."
+                    )
+
+    def run_resident_peer_support_group(self): 
+        residents_attending = []
+
+        for resident_id in self.model.resident_agent_registry.keys():
+            if random.random() < self.model.p_resident_support_attendance:  # Probability check for attendance
+                resident = self.model.resident_agent_registry[resident_id]\
+                    ['agent_object']
+                residents_attending.append(resident)
+
+        for resident in residents_attending:
+            for other_resident in residents_attending:
+                if other_resident.unique_id != resident.unique_id:
+                    for micro in other_resident.microproviders_to_recommend:
+                        if (micro not in resident.microproviders_to_recommend and
+                            micro not in resident.blacklisted_microproviders and
+                            self.model.microprovider_agent_registry[micro]\
+                            ['agent_object'].micro_quality >= resident.micro_quality_threshold):
+                            resident.microproviders_to_recommend.append(micro)
+                            self.model.logger.info(
+                                f"Resident {resident.unique_id} received a recommendation for Microprovider {micro} from Resident {other_resident.unique_id} in a peer support group."
+                            )
+            if resident.micro_quality_threshold < self.coord_micro_quality_threshold:
+                resident.micro_quality_threshold = min(
+                    resident.micro_quality_threshold + 0.05,
+                    self.coord_micro_quality_threshold)
+                self.model.logger.info(
+                    f"Resident {resident.unique_id} increased their microprovider quality threshold to {resident.micro_quality_threshold} after attending a peer support group."
+                ) 
+            if resident.micro_quality_threshold > self.coord_micro_quality_threshold:
+                resident.micro_quality_threshold = max(
+                    resident.micro_quality_threshold - 0.05,
+                    self.coord_micro_quality_threshold)
+                self.model.logger.info(
+                    f"Resident {resident.unique_id} decreased their microprovider quality threshold to {resident.micro_quality_threshold} after attending a peer support group."
+                )  
 
     def step(self):
-        pass
+        if self.model.step_count % self.model.microprovider_coordinator_group_interval == 0:
+            self.run_microprovider_peer_support_group()
+        
+        if self.model.step_count % self.model.resident_coordinator_group_interval == 0:
+            self.run_resident_peer_support_group()
+
+        if random.random() < 0.1:
+            self.microprovider_outreach()
 
 class Care_Model(Model):
     def __init__(self,
@@ -665,19 +773,19 @@ class Care_Model(Model):
                  p_approach_random_micro,
                  p_review_care,
                  p_promote_micro,
-                 micro_quality_threshold,
+                 coordinator_has_threshold,
+                 coord_micro_quality_threshold,
                  micro_join_coord,
-                 buffer_steps=200,  # Default buffer period
-                 random_seed=None,
-                 annual_population_growth_rate=0.011):  # Add annual growth rate
+                 resident_coordinator_group_interval,
+                 microprovider_coordinator_group_interval,
+                 p_micro_support_attendance,
+                 p_resident_support_attendance,
+                 buffer_steps=200,
+                 random_seed=np.random.seed(),
+                 annual_population_growth_rate=0.011):
         super().__init__()
 
-        self.random_seed = random_seed
-        # Set the random seed for reproducibility
-        if random_seed is not None:
-            random.seed(random_seed)
-            np.random.seed(random_seed)
-
+        '''setting up model logger'''
         # Create a buffer to hold log messages
         self.log_buffer = StringIO()
 
@@ -697,50 +805,82 @@ class Care_Model(Model):
         self.logger.addHandler(buffer_handler)
         self.logger.propagate = False
 
-        # model variables
-        self.num_resident_agents = N_RESIDENT_AGENTS
-        self.num_microprovider_agents = N_MICROPROVIDER_AGENTS
-        self.num_unpaidcare_agents = N_UNPAIDCARE_AGENTS
-        self.num_coordinator_agents = N_COORDINATOR_AGENTS
+        '''setting up model warmup and buffer before main run'''
+                # Add a warming-up flag
+        self.warming_up = True
+        self.warming_up_step = None
+
+        self.buffer_steps = buffer_steps
+        self.buffer_active = False
+        self.buffer_step_count = 0 
+        self.buffer_end_step = None
+
+        # model env variables
         self.running = True
         self.grid = MultiGrid(width, height, True)
         self.schedule = RandomActivation(self)
         self.step_count = 0
             
+        # agent number variables
+        self.num_resident_agents = N_RESIDENT_AGENTS
+        self.num_microprovider_agents = N_MICROPROVIDER_AGENTS
+        '''unpaid carers not used'''
+        self.num_unpaidcare_agents = N_UNPAIDCARE_AGENTS
+        self.num_coordinator_agents = N_COORDINATOR_AGENTS
+
         # variables for probabilities and thresholds
         self.resident_care_need_min = resident_care_need_min
         self.resident_care_need_max = resident_care_need_max
         self.microprovider_care_cap_min = microprovider_care_cap_min
         self.microprovider_care_cap_max = microprovider_care_cap_max
 
-        # parameters for resident behaviour
+        # probabilities for resident behaviours
         self.p_use_coordinator = p_use_coordinator
         self.p_approach_random_micro = p_approach_random_micro
         self.p_review_care = p_review_care
         self.p_promote_micro = p_promote_micro
-        self.micro_quality_threshold = micro_quality_threshold
+
+        # coord attributes
+        self.coord_micro_quality_threshold = coord_micro_quality_threshold
+        self.coordinator_has_threshold = coordinator_has_threshold
+
+        self.resident_coordinator_group_interval = resident_coordinator_group_interval
+        self.microprovider_coordinator_group_interval = microprovider_coordinator_group_interval
+
+        self.p_micro_support_attendance = p_micro_support_attendance
+        self.p_resident_support_attendance = p_resident_support_attendance
+
+        # probabilities for microprovider behaviours
         self.micro_join_coord = micro_join_coord
 
         # controlling resident growth
-        self.residents_leaving = 0
         self.annual_population_growth_rate = annual_population_growth_rate
         self.p_resident_leave = p_resident_leave
         self.p_microprovider_leave = p_microprovider_leave
         self.p_microprovider_join = p_microprovider_join
+        self.annual_population_growth_rate = annual_population_growth_rate
+        self.weekly_population_growth_rate = (1 + annual_population_growth_rate)\
+        ** (1/52)
+        self.fractional_growth_accumulator = 0
 
-        # counter of number of micros approached
+        # counters for residents leaving the model - to monitor turnover
+        self.residents_leaving = 0
+
+        # rolling count of approaches
         self.num_micros_approached_randomly = 0
         self.num_micros_approached_recommended = 0
         self.num_micros_approached_carer_recommended = 0
         self.num_micros_approached_coordinator = 0
-        # Step-by-step counters
+        # step-by-step count of approaches
         self.step_micros_approached_randomly = 0
         self.step_micros_approached_recommended = 0
         self.step_micros_approached_carer_recommended = 0
         self.step_micros_approached_coordinator = 0
+
         # initialise agent registries
         self.resident_agent_registry = {}
         self.microprovider_agent_registry = {}
+        '''unpaid carers not used'''
         self.unpaidcarer_agent_registry = {}
         self.coordinator_agent_registry = {}
 
@@ -752,7 +892,7 @@ class Care_Model(Model):
                 'agent_object': a,
                 'agent_id': i,
                 'registered_microproviders': [],
-                'micro_quality_threshold': a.micro_quality_threshold
+                'coord_micro_quality_threshold': a.coord_micro_quality_threshold
             }
 
             # Place the coordinator at the center of the grid
@@ -792,12 +932,16 @@ class Care_Model(Model):
 
             self.resident_agent_registry[a.unique_id]['pos'] = a.pos
 
-        # adding datacollector to model
+        '''
+        microprovider agents are drip fed into the model when warming up, 
+        unpaid care agents are not used
+        '''
+        
+        '''setting up data collector'''
         self.datacollector = DataCollector(
             model_reporters={
                 "number_of_micros_randomly_approached": self.calc_num_micros_approached_randomly,
                 "number_of_micros_recommended": self.calc_num_micros_approached_recommended,
-                "number_of_micros_carer_recommended": self.calc_num_micros_approached_carer_recommended,
                 "number_of_micros_approached_coordinator": self.calc_num_micros_approached_coordinator,
                 "step_micros_approached_randomly": lambda m: m.step_micros_approached_randomly,
                 "step_micros_approached_recommended": lambda m: m.step_micros_approached_recommended,
@@ -808,51 +952,61 @@ class Care_Model(Model):
                 "resident_population": lambda m: m.num_resident_agents,
                 "avg_packages_of_care": self.calc_avg_packages_of_care,
                 "avg_connected_microproviders": self.calc_avg_connected_microproviders,
-                "coordinator_register_size": self.calc_coordinator_register_size
+               # "coordinator_register_size": self.calc_coordinator_register_size
             }
         )
 
-        # Add a warming-up flag
-        self.warming_up = True
-        self.warming_up_step = None
+    '''functions to access logs'''
+    def print_logs(self):
+        """Print all accumulated log messages."""
+        self.log_buffer.seek(0)
+        print(self.log_buffer.read())
+        
+    def clear_logs(self):
+        """Clear all accumulated log messages."""
+        self.log_buffer.truncate(0)
+        self.log_buffer.seek(0)
 
-        '''xxx Buffer period setup xxx'''
-        self.buffer_steps = buffer_steps
-        self.buffer_active = False  # Flag to track buffer period
-        self.buffer_step_count = 0  # Counter for buffer steps
-        self.buffer_end_step = None
-
-        self.annual_population_growth_rate = annual_population_growth_rate
-        self.weekly_population_growth_rate = (1 + annual_population_growth_rate) ** (1/52) - 1
-
+    '''function to manage resident population growth'''
     def increase_residents(self):
         """
         Increase the number of residents based on the weekly population growth rate
-        and the number of residents leaving the model.
+        and the number of residents leaving the model. Ensure that residents who
+        leave are replaced.
         """
         if self.warming_up or self.buffer_active:
             return
-        
+
         # Calculate the exact number of new residents to add for net growth
         exact_growth = self.num_resident_agents * self.weekly_population_growth_rate
-        net_growth = int(exact_growth)  # Integer part of the growth
+        net_growth = int(exact_growth) - self.num_resident_agents  # Difference between current and target population
 
-        # Use the fractional part of the growth probabilistically
-        fractional_growth = exact_growth - net_growth
-        if random.random() < fractional_growth:
-            net_growth += 1
+        # Ensure net_growth is non-negative
+        if net_growth < 0:
+            net_growth = 0
 
         # Add residents to replace those who left
-        total_new_residents = net_growth + self.residents_leaving
+        net_growth += self.residents_leaving
 
-        # Add the new residents
-        for _ in range(total_new_residents):
+        # Add new residents based on net growth
+        for _ in range(net_growth):
             new_id = max(self.resident_agent_registry.keys(), default=0) + 1
             self._add_new_resident(new_id)
+            self.logger.info(f"New resident {new_id} added to replace or grow population.")
 
-        self.logger.info(f"Added {total_new_residents} new residents this step "
-                         f"({self.residents_leaving} replaced, {net_growth} net growth).")
+        # Handle fractional growth probabilistically
+        fractional_growth = exact_growth - int(exact_growth)
+        self.fractional_growth_accumulator += fractional_growth
+
+        if self.fractional_growth_accumulator >= 1:
+            new_id = max(self.resident_agent_registry.keys(), default=0) + 1
+            self._add_new_resident(new_id)
+            self.fractional_growth_accumulator -= 1
+            self.logger.info(f"New resident {new_id} added due to fractional growth.")
+
+        self.logger.info(f"Residents increased by {net_growth} with fractional growth adjustments.")
         
+    '''function to manage warming-up phase and then tranistion to buffer phase'''
     def check_warming_up(self):
         """
         Check if the warming-up condition is met.
@@ -882,13 +1036,9 @@ class Care_Model(Model):
             self.buffer_active = True
             self.logger.info(f"Buffer phase activated at step {self.step_count}")
 
+    '''function to manage buffer phase after warming-up'''
     def check_buffer_active(self):
-        """
-        Check and update the buffer state.
-        This method handles the logic for the buffer period and updates the buffer_active flag.
-        """
         if not self.buffer_active:
-            self.logger.info(f"Buffer is not active at step {self.step_count}")
             return
 
         self.buffer_step_count += 1
@@ -896,41 +1046,31 @@ class Care_Model(Model):
 
         if self.buffer_step_count >= self.buffer_steps:
             self.buffer_active = False
+            self.buffer_end_step = self.buffer_end_step or self.step_count
             self.logger.info(f"Buffer period ended at step {self.step_count}")
-            if self.buffer_end_step is None:
-                self.buffer_end_step = self.step_count
 
             # Reset counters after the buffer period ends
-            self.num_micros_approached_randomly = 0
-            self.num_micros_approached_recommended = 0
-            self.num_micros_approached_carer_recommended = 0
-            self.num_micros_approached_coordinator = 0
-
-            # Reset step-by-step counters
-            self.step_micros_approached_randomly = 0
-            self.step_micros_approached_recommended = 0
-            self.step_micros_approached_carer_recommended = 0
-            self.step_micros_approached_coordinator = 0
-
+            self._reset_counters()
             self.logger.info("Counters have been reset after the buffer period.")
 
-    # Functions to access logs
-    def print_logs(self):
-        """Print all accumulated log messages."""
-        self.log_buffer.seek(0)
-        print(self.log_buffer.read())
-        
-    def clear_logs(self):
-        """Clear all accumulated log messages."""
-        self.log_buffer.truncate(0)
-        self.log_buffer.seek(0)
+    '''function to reset counters after buffer period'''
+    def _reset_counters(self):
+        """Reset counters related to micro approaches."""
+        self.num_micros_approached_randomly = 0
+        self.num_micros_approached_recommended = 0
+        self.num_micros_approached_carer_recommended = 0
+        self.num_micros_approached_coordinator = 0
 
-    # adding agents as model runs
+        self.step_micros_approached_randomly = 0
+        self.step_micros_approached_recommended = 0
+        self.step_micros_approached_carer_recommended = 0
+        self.step_micros_approached_coordinator = 0
+
+    """
+    Add new micro-providers during warming-up based on the care threshold
+    and after warming-up based on a small random chance.
+    """ 
     def add_new_agents(self):
-        """
-        Add new micro-providers during warming-up based on the care threshold
-        and after warming-up based on a small random chance.
-        """ 
         # During warming-up: Add microproviders if care percentage is below the threshold
         if self.warming_up:
             total_residents = len(self.resident_agent_registry)
@@ -950,14 +1090,16 @@ class Care_Model(Model):
                     self._add_new_microprovider(new_id)
                     self.logger.info(f"Microprovider {new_id} added during warming-up.")
 
+        # buffer between warming-up and normal operation - do nothing
         if self.buffer_active:
             return
         
         # After warming-up: Add microproviders randomly
-        if not self.warming_up and not self.buffer_active and random.random() < self.p_microprovider_join:  # Updated parameter name
+        if not self.warming_up and not self.buffer_active and random.random() < self.p_microprovider_join:
             new_id = max(self.microprovider_agent_registry.keys(), default=0) + 1
             self._add_new_microprovider(new_id)
             self.logger.info(f"Microprovider {new_id} joined the model randomly.")
+            # print(f"Microprovider {new_id} joined the model randomly.")
 
     def _add_new_resident(self, new_id):
         a = Resident_Agent(new_id, self)
@@ -1000,6 +1142,7 @@ class Care_Model(Model):
             'micro_quality': a.micro_quality,
             'has_capacity': True,
             'allocated_residents': [],
+            'microprovider_peers': [],
             'packages_of_care_delivered': []
         }
         
@@ -1017,7 +1160,7 @@ class Care_Model(Model):
         self.logger.info(
             f"New Microprovider {new_id} joined with {a.care_capacity}")
      
-    # removing agents as model runs
+    '''remove agents from model based on conditions'''
     def remove_agent(self, agent): 
         self.schedule.remove(agent)
         self.grid.remove_agent(agent)
@@ -1031,8 +1174,7 @@ class Care_Model(Model):
                     idx = micro.residents.index(agent.unique_id)
                     micro.residents.remove(agent.unique_id)
                     micro.packages_of_care.pop(idx)
-                    micro.decide_capacity()
-                    
+
             # Remove from registry
             del self.resident_agent_registry[agent.unique_id]
             self.num_resident_agents -= 1
@@ -1046,7 +1188,6 @@ class Care_Model(Model):
                     idx = resident.microproviders.index(agent.unique_id)
                     resident.microproviders.remove(agent.unique_id)
                     resident.packages_of_care_received.pop(idx)
-                    resident.decide_needs_met()
                     
             # Remove from coordinator if registered
             if self.num_coordinator_agents > 0:
@@ -1061,6 +1202,10 @@ class Care_Model(Model):
 
     def check_agent_removals(self):
         """Check and remove agents based on model conditions."""
+        # Prevent agent removal during warmup or buffer phases
+        if self.warming_up or self.buffer_active:
+            return
+
         # Reset the residents_leaving counter at the start of each step
         self.residents_leaving = 0
 
@@ -1079,6 +1224,7 @@ class Care_Model(Model):
                 self.remove_agent(micro)
                 self.logger.info(f"Microprovider {micro_id} has left the model")
 
+    '''updating agent registries function for the model step function'''
     def _update_agent_registry(self, agent):
         """Update the appropriate registry based on agent type."""
         if isinstance(agent, MicroProvider_Agent):
@@ -1095,6 +1241,7 @@ class Care_Model(Model):
         registry = self.microprovider_agent_registry[agent.unique_id]
         registry.update({
             'allocated_residents': agent.residents,
+            'microprovider_peers': agent.microprovider_peers,
             'packages_of_care_delivered': agent.packages_of_care,
             'has_capacity': agent.has_capacity
         })
@@ -1112,6 +1259,7 @@ class Care_Model(Model):
             'unpaidcare_rec': agent.unpaidcare_rec,
         })
 
+    '''unpaid carers not in model currently'''
     def _update_unpaidcarer_registry(self, agent):
         """Update unpaid carer registry with current agent state."""
         registry = self.unpaidcarer_agent_registry[agent.unique_id]
@@ -1138,16 +1286,11 @@ class Care_Model(Model):
         num = self.num_micros_approached_recommended
         return num
     
-    def calc_num_micros_approached_carer_recommended(self):
-        num = self.num_micros_approached_carer_recommended
-        return num
-    
     def calc_num_micros_approached_coordinator(self):
         num = self.num_micros_approached_coordinator
         return num
     
     def calc_num_microproviders(self):
-        """Calculate the total number of micro-providers in the model."""
         return len(self.microprovider_agent_registry)
     
     def calc_receiving_care(self):
@@ -1159,13 +1302,6 @@ class Care_Model(Model):
         return count_receiving_care
 
     def calc_avg_packages_of_care(self):
-        """
-        Calculate the average number of packages of care received by residents
-        who have at least one package of care.
-
-        Returns:
-            float: The average number of packages of care for residents with care.
-        """
         # Filter residents who have at least one package of care
         residents_with_care = [
             agent for agent in self.resident_agent_registry.values()
@@ -1185,12 +1321,6 @@ class Care_Model(Model):
         return total_packages / num_residents_with_care if num_residents_with_care > 0 else 0
 
     def calc_avg_connected_microproviders(self):
-        """
-        Calculate the average number of microproviders connected to residents.
-
-        Returns:
-            float: The average number of connected microproviders per resident.
-        """
         total_connections = sum(
             len(agent['allocated_microproviders'])
             for agent in self.resident_agent_registry.values()
@@ -1198,38 +1328,31 @@ class Care_Model(Model):
         num_residents = len(self.resident_agent_registry)
         return total_connections / num_residents if num_residents > 0 else 0
 
-    ## redundant?
-    def calc_coordinator_register_size(self):
-        """
-        Calculate the size of the coordinator's register.
-
-        Returns:
-            int: The number of microproviders registered with the coordinator.
-        """
-        if self.num_coordinator_agents > 0:
-            return len(self.coordinator_agent_registry[0]['registered_microproviders'])
-        return 0
- 
     # model step
     def step(self):
         self.logger.info(f"Model step {self.step_count}")
 
         # Check if the warming-up condition is met
         self.check_warming_up()
+        # print(f"Warming up status: {self.warming_up}")
 
         self.check_buffer_active()
+        # print(f"Buffer active status: {self.buffer_active}")
 
         # Add new agents during warming-up or randomly after warming-up
         self.add_new_agents()
 
         # Check agent removals and increase residents after warming-up
         self.check_agent_removals()
+        # print(f"Agent removals checked at step {self.step_count}")
         self.increase_residents()
+        # print(f"Residents increased at step {self.step_count}")
 
         # Update registries and step each agent
         for agent in self.schedule.agents:
             self._update_agent_registry(agent)
             agent.step()
+            # print(f"Stepped agent {agent.unique_id} of type {type(agent).__name__}")
 
         self.datacollector.collect(self)
 
@@ -1271,7 +1394,7 @@ def run_care_model(params=None):
         N_RESIDENT_AGENTS=params.get("n_residents", 833),
         N_MICROPROVIDER_AGENTS=params.get("n_microproviders", 0),
         N_UNPAIDCARE_AGENTS=params.get("n_unpaidcarers", 0),
-        N_COORDINATOR_AGENTS=params.get("n_coordinators", 1),
+        N_COORDINATOR_AGENTS=params.get("n_coordinators", 0),
         # grid and misc
         width=params.get("width", 50),
         height=params.get("height", 50),
@@ -1290,16 +1413,24 @@ def run_care_model(params=None):
         p_promote_micro=params.get("p_promote_micro", 0.001),
         p_microprovider_join=params.get("p_microprovider_join", 0.01),  # Updated parameter name
         # microprovider attributes
-        micro_quality_threshold=params.get("micro_quality_threshold", 0.5),
-        micro_join_coord=params.get("micro_join_coord", 0.5)
+        micro_join_coord=params.get("micro_join_coord", 0.5),
+        #coordinator attributes
+        coord_micro_quality_threshold=params.get("coord_micro_quality_threshold", 0.5),
+        coordinator_has_threshold=params.get("coordinator_has_threshold", True),
+        resident_coordinator_group_interval=params.get("resident_coordinator_group_interval", 4),
+        microprovider_coordinator_group_interval=params.get("microprovider_coordinator_group_interval", 4),
+        p_micro_support_attendance=params.get("p_micro_support_attendance", 0.1),
+        p_resident_support_attendance=params.get("p_resident_support_attendance", 0.01)
         )
 
     # Run the model until the warming-up phase ends
     while model.warming_up:
         model.step()
+        # print(f"Warming up... Step {model.step_count}")
 
     while model.buffer_active:
         model.step()
+        # print(f"Buffering... Step {model.step_count}")
 
     # Calculate the total number of steps to run after warming-up
     total_steps = num_years * 52  # 1 year = 52 weeks
@@ -1307,6 +1438,7 @@ def run_care_model(params=None):
     # Run the model for the specified number of steps
     for _ in range(total_steps):
         model.step()
+        # print(f"Running... Step {model.step_count}")
 
     # Collect data from the model
     data = model.datacollector.get_model_vars_dataframe()
@@ -1347,29 +1479,6 @@ def run_care_model(params=None):
         "data_coord_registry": data_coord_registry,
     }
 
-# results = run_care_model(params={"num_years": 5,"n_residents": 833})
-
-# print(results['data_resident_registry']['pos'])
-# print(type(results['data_resident_registry'].iloc[1]['pos']))
-
-# print(results['data_microprovider_registry']['pos'])
-
-# print(results['data_coord_registry']['pos'])
-# # import time
-# import psutil
-
-# def get_memory_usage_mb():
-#     """Get the current memory usage of the process in megabytes."""
-#     process = psutil.Process()
-#     mem_info = process.memory_info()
-#     return mem_info.rss / (1024 * 1024)  # Convert bytes to megabytes
-
-# start_mem_6000 = get_memory_usage_mb()
-# start_time_6000 = time.time()
-# results = run_care_model(params={"num_years": 15,"n_residents": 6000})
-# end_time_6000 = time.time()
-# end_mem_6000 = get_memory_usage_mb()
-# print(f"Simulation with 6000 residents took {end_time_6000 - start_time_6000} seconds")
-# print(f"Memory usage before simulation: {start_mem_6000} MB")
-# print(f"Memory usage after simulation: {end_mem_6000} MB")
-# print(results['model'].warming_up_step)
+# results = run_care_model(params={"num_years": 5, "n_coordinators":1})
+# print(results['model'].num_resident_agents)
+# print(len(results['data_resident_registry']))

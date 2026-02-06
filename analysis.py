@@ -82,7 +82,7 @@ def plot(data):
         labels=['Randomly Approached', 'Recommended', 'Approached via Coordinator']
     )
     ax[0].set_title('Provider Approaches by Type')
-    ax[0].set_xlabel('Model Week')
+    ax[0].set_xlabel('Year')
     ax[0].set_ylabel('Number of Approaches')
     ax[0].legend(loc='upper left')
 
@@ -98,6 +98,18 @@ def plot(data):
     ax[1].set_ylabel('Count')
     ax[1].legend(['Microproviders', 'Receiving Care', 'Resident Population'], loc='upper left')
 
+    # Annotate the second plot: System Capacity and Care Delivery (Yearly)
+    for col in ['calc_micros', 'calc_is_receiving_care', 'resident_population']:
+        yearly_points = data.groupby('year').first()
+        for x, y in zip(yearly_points['model_week'], yearly_points[col]):
+            ax[1].annotate(
+                f"{y}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 5),
+                ha='center', fontsize=8
+            )
+
     # Third plot: Weekly Averages (Line Plot)
     data.plot(
         kind='line',
@@ -106,12 +118,32 @@ def plot(data):
         ax=ax[2]
     )
     ax[2].set_title('Weekly Averages')
-    ax[2].set_xlabel('Model Week')
+    ax[2].set_xlabel('Year')
     ax[2].set_ylabel('Average')
     ax[2].legend(['Avg Packages of Care', 'Avg Connected Microproviders'], loc='upper left')
 
-    # Fourth plot: Step-Based Approaches by Year (Stacked Bar Chart)
-    bar_width = 0.35
+    # Annotate the third plot: Weekly Averages (Yearly)
+    for col in ['avg_packages_of_care', 'avg_connected_microproviders']:
+        yearly_points = round(data.groupby('year').first(), 1)
+        for x, y in zip(yearly_points['model_week'], yearly_points[col]):
+            ax[2].annotate(
+                f"{y}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 5),
+                ha='center', fontsize=8
+            )
+    # Map model_week to year for x-axis ticks
+    year_ticks = data.groupby('year')['model_week'].first().values
+    year_labels = data['year'].unique()
+
+    # Update x-axis ticks for top 3 subplots
+    for axis in ax:
+        axis.set_xticks(year_ticks)
+        axis.set_xticklabels(year_labels)
+
+    #subplot 4: Step-Based Approaches by Year (Stacked Bar Chart)
+        bar_width = 0.35
     ax[3].bar(
         yearly_data['year'] - bar_width / 2,
         yearly_data['step_micros_approached_randomly'],
@@ -132,20 +164,40 @@ def plot(data):
         bottom=yearly_data['step_micros_approached_randomly'] + yearly_data['step_micros_approached_recommended'],
         label='Approached via Coordinator'
     )
+
+    # Add callout values for y-axis data points on each year
+    for i, row in yearly_data.iterrows():
+        ax[3].annotate(
+            f"{row['step_micros_approached_randomly']}",
+            (row['year'] - bar_width / 2, row['step_micros_approached_randomly'] / 2),
+            ha='center', va='center', color='white', fontsize=8
+        )
+        ax[3].annotate(
+            f"{row['step_micros_approached_recommended']}",
+            (row['year'] - bar_width / 2, row['step_micros_approached_randomly'] + row['step_micros_approached_recommended'] / 2),
+            ha='center', va='center', color='white', fontsize=8
+        )
+        if row['step_micros_approached_coordinator'] > 0:
+            ax[3].annotate(
+                f"{row['step_micros_approached_coordinator']}",
+                (row['year'] - bar_width / 2, row['step_micros_approached_randomly'] + row['step_micros_approached_recommended'] + row['step_micros_approached_coordinator'] / 2),
+                ha='center', va='center', color='white', fontsize=8
+        )
+    
     ax[3].set_title('Step-Based Approaches by Year (Stacked Bar Chart)')
     ax[3].set_xlabel('Year')
     ax[3].set_ylabel('Number of Approaches')
     ax[3].legend(loc='upper left')
+    
+    ax[3].set_xticks(yearly_data['year'])
+    ax[3].set_xticklabels(yearly_data['year'])
+
+    # Restore default ticks for ax[3]
+    ax[3].tick_params(axis='x', which='both', labelrotation=0)
 
     plt.tight_layout()
     return fig
 
-params_with_coordinator = {
-    "n_coordinators": 1,  # Coordinator enabled
-    "random_seed": 42,
-    "num_years": 5,
-    "p_random_micro_join": 0.5  # 10% chance per step
-}
 
 # results_with_coordinator = run_care_model(params_with_coordinator)
 

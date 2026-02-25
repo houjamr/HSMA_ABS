@@ -1,4 +1,6 @@
-from wordcloud import WordCloud
+# WordCloud import disabled to avoid native dependency issues on Windows.
+# If you want to re-enable, install `wordcloud` into your env and uncomment.
+# from wordcloud import WordCloud
 import glob
 import mesa
 import streamlit as st
@@ -652,12 +654,10 @@ elif page == "Do You Dig it?":
         comments.append(comment)
         pd.DataFrame({"comment": comments}).to_csv(COMMENTS_FILE, index=False)
 
-    # Generate word cloud
+    # WordCloud generation is disabled due to native dependency issues.
+    # If you re-enable `wordcloud`, restore the original implementation.
     def generate_word_cloud(comments):
-        text = " ".join(comments)
-        wordcloud = WordCloud(width=800, height=400, background_color="white").\
-            generate(text)
-        return wordcloud
+        return None
 
     # Streamlit App
     st.subheader("Do you Dig it? Share Your Thoughts!")
@@ -720,14 +720,26 @@ elif page == "Do You Dig it?":
         else:
             st.error("Comment cannot be empty.")
 
-    # Display Word Cloud
+    # Display Word Cloud (disabled)
     comments = load_comments()
     if comments:
-        wordcloud = generate_word_cloud(comments)
-        fig, ax = plt.subplots(figsize=(12, 8),dpi=100,tight_layout=True)
-        ax.imshow(wordcloud, interpolation="bilinear")
-        ax.axis("off")
-        st.pyplot(fig)
+        st.info("Word cloud generation is currently disabled (missing native dependency).")
+        # Quick fallback: show simple horizontal bar chart of top words
+        try:
+            from collections import Counter
+
+            words = " ".join(comments).split()
+            cleaned = [w.strip('.,!?:;()\"\'').lower() for w in words if w.strip()]
+            counts = Counter(cleaned)
+            top = counts.most_common(20)
+            if top:
+                words_, freqs = zip(*top)
+                fig, ax = plt.subplots(figsize=(8, 5))
+                ax.barh(list(reversed(words_)), list(reversed(freqs)))
+                ax.set_xlabel("Frequency")
+                st.pyplot(fig)
+        except Exception:
+            st.info("Comments present but unable to render fallback visualization.")
     else:
         st.info("No comments yet. Be the first to leave one!")
 

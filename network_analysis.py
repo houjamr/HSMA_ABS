@@ -18,10 +18,6 @@ from mesa.time import RandomActivation # random order of agent actions
 from mesa.space import MultiGrid # multiple agents er cell
 from mesa.datacollection import DataCollector
 
-from model import run_care_model
-
-# from model import run_care_model
-
 def extract_relationships(coord_data, micro_data, res_data):
     """
     Extracts relationships between agents, including their positions.
@@ -356,7 +352,6 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
         spine.set_visible(False)
 
     return fig
-
 
 # The model returns registry DataFrames under these keys
 # relationships, positions = extract_relationships(

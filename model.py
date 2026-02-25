@@ -438,6 +438,7 @@ class Resident_Agent(Agent):
             self.microproviders_to_recommend.pop(0)
 
  #MicroProvider Agent   
+
 class MicroProvider_Agent(Agent):
     # constructor
     def __init__(self, unique_id, model):
@@ -454,7 +455,7 @@ class MicroProvider_Agent(Agent):
         self.care_capacity = self.generate_care_capacity
 
     def initiate_micro_quality_score(self):
-        self.generate_mic_qual = round(random.uniform(0,1),3)
+        self.generate_mic_qual = round(random.uniform(0.25,1),3)
         self.micro_quality = self.generate_mic_qual
 
     def decide_capacity(self):
@@ -648,11 +649,7 @@ class Coordinator_Agent(Agent):
         self.registered_microproviders = []
         self.coord_micro_quality_threshold = 0.5
         self.coordinator_has_threshold = self.model.coordinator_has_threshold
-
-    # function that toggles if a coordinator uses the target quality threshold to
-    #  decide whether to register a microprovider or not
-        # microprovider function checks whether coordinator has quality threshold value enabled
-
+        
     def microprovider_outreach(self):
         unregistered_microproviders = [mp for mp in self.model.microprovider_agent_registry.keys()
                                        if mp not in self.registered_microproviders]
@@ -665,25 +662,11 @@ class Coordinator_Agent(Agent):
                     self.registered_microproviders.append(target_microprovider.unique_id)
                 else:
                     target_microprovider.micro_quality = min(target_microprovider.micro_quality + 0.05, 1.0)
+
             if not self.coordinator_has_threshold:
                 self.registered_microproviders.append(target_microprovider.unique_id)
         else:
             self.model.logger.info("No unregistered microproviders available for outreach.")
-
-    # function where a coordinator does outreach work with microproviders in the model
-    # to encourage them to register/improve there quality rating
-        # p chance coordintator does outreach work each step, if microprovider
-        # passess threshold, recruit, otherwise improve rating by 0.05
-        # (rating of a mp cannot exceed 1)
-        
-    # function where coordinator runs a microprovider peer support group
-        # function where coordinator collects mps
-
-    # function where coordinator runs a resident peer spport group to encourage
-    # sharing of microprovider recommendations
-        # collect n residents, residents share recommendations
-        # if residents microprovider threshold is less than coorindator, add to
-        # match but not exceed the threshold of the coordinator group.
 
     def run_microprovider_peer_support_group(self):
         if not self.registered_microproviders:
@@ -744,6 +727,10 @@ class Coordinator_Agent(Agent):
                     f"Resident {resident.unique_id} decreased their microprovider quality threshold to {resident.micro_quality_threshold} after attending a peer support group."
                 )  
 
+    def promote_microproviding(self):
+            new_id = max(self.model.microprovider_agent_registry.keys(), default=0) + 1
+            self.model._add_new_microprovider(new_id)
+
     def step(self):
         if self.model.step_count % self.model.microprovider_coordinator_group_interval == 0:
             self.run_microprovider_peer_support_group()
@@ -751,15 +738,21 @@ class Coordinator_Agent(Agent):
         if self.model.step_count % self.model.resident_coordinator_group_interval == 0:
             self.run_resident_peer_support_group()
 
-        if random.random() < 0.1:
+        if random.random() < self.model.p_coord_microprovider_outreach:
             self.microprovider_outreach()
+
+        if random.random() < self.model.p_promote_microproviding:
+            self.promote_microproviding()
 
 class Care_Model(Model):
     def __init__(self,
-                 N_RESIDENT_AGENTS,
+                 over_65_population,  # Total over-65 population
+                 needs_help_percentage,  # Percentage of over-65s who need help
+                 target_care_percentage,  # Percentage of over-65s receiving help
                  N_MICROPROVIDER_AGENTS,
                  N_UNPAIDCARE_AGENTS,
                  N_COORDINATOR_AGENTS,
+                 N_RESIDENT_AGENTS,  # This will be calculated dynamically if set to None
                  width,
                  height,
                  resident_care_need_min,
@@ -780,8 +773,9 @@ class Care_Model(Model):
                  microprovider_coordinator_group_interval,
                  p_micro_support_attendance,
                  p_resident_support_attendance,
-                 buffer_steps=200,
-                 random_seed=np.random.seed(),
+                 p_coord_microprovider_outreach,
+                 p_promote_microproviding,
+                 random_seed = None,
                  annual_population_growth_rate=0.011):
         super().__init__()
 
@@ -805,28 +799,46 @@ class Care_Model(Model):
         self.logger.addHandler(buffer_handler)
         self.logger.propagate = False
 
-        '''setting up model warmup and buffer before main run'''
+        '''setting up model warmup before main run'''
                 # Add a warming-up flag
         self.warming_up = True
         self.warming_up_step = None
 
-        self.buffer_steps = buffer_steps
-        self.buffer_active = False
-        self.buffer_step_count = 0 
-        self.buffer_end_step = None
+        # Microprovider addition cooldown tracking
+        self.last_microprovider_add_step = -5  # Initialize to allow immediate first addition
 
         # model env variables
         self.running = True
         self.grid = MultiGrid(width, height, True)
         self.schedule = RandomActivation(self)
         self.step_count = 0
-            
-        # agent number variables
+
+        # Calculate the number of resident agents dynamically
+        needs_help_population = over_65_population * (needs_help_percentage / 100)
+        receiving_help_population = over_65_population * (target_care_percentage / 100)
+        N_RESIDENT_AGENTS = int(needs_help_population + receiving_help_population)
+
+        # Assign the calculated or provided values
         self.num_resident_agents = N_RESIDENT_AGENTS
+        self.num_microprovider_agents = N_MICROPROVIDER_AGENTS
+        self.num_unpaidcare_agents = N_UNPAIDCARE_AGENTS
+        self.num_coordinator_agents = N_COORDINATOR_AGENTS
+
+        # Log the calculation for debugging
+        self.logger.info(f"Over-65 Population: {over_65_population}")
+        self.logger.info(f"Needs Help Percentage: {needs_help_percentage}%")
+        self.logger.info(f"Target Care Percentage: {target_care_percentage}%")
+        self.logger.info(f"Calculated Resident Agents: {self.num_resident_agents}")
+
+        # agent number variables
         self.num_microprovider_agents = N_MICROPROVIDER_AGENTS
         '''unpaid carers not used'''
         self.num_unpaidcare_agents = N_UNPAIDCARE_AGENTS
         self.num_coordinator_agents = N_COORDINATOR_AGENTS
+
+        self.over_65_population = over_65_population
+        self.target_care_percentage = target_care_percentage
+        self.needs_help_percentage = needs_help_percentage
 
         # variables for probabilities and thresholds
         self.resident_care_need_min = resident_care_need_min
@@ -849,6 +861,9 @@ class Care_Model(Model):
 
         self.p_micro_support_attendance = p_micro_support_attendance
         self.p_resident_support_attendance = p_resident_support_attendance
+
+        self.p_coord_microprovider_outreach = p_coord_microprovider_outreach
+        self.p_promote_microproviding = p_promote_microproviding
 
         # probabilities for microprovider behaviours
         self.micro_join_coord = micro_join_coord
@@ -928,7 +943,7 @@ class Care_Model(Model):
                 x = random.randrange(self.grid.width)
                 y = random.randrange(self.grid.height)
                 self.grid.place_agent(a, (x,y))
-            # print(f'placed resident agent {a.pos}')
+            self.logger.info(f'placed resident agent {a.pos}')
 
             self.resident_agent_registry[a.unique_id]['pos'] = a.pos
 
@@ -948,20 +963,29 @@ class Care_Model(Model):
                 "step_micros_approached_carer_recommended": lambda m: m.step_micros_approached_carer_recommended,
                 "step_micros_approached_coordinator": lambda m: m.step_micros_approached_coordinator,
                 "calc_is_receiving_care": self.calc_receiving_care,
+                "calc_receiving_care_percentage": self.calc_receiving_care_percentage,
                 "calc_micros": self.calc_num_microproviders,
                 "resident_population": lambda m: m.num_resident_agents,
                 "avg_packages_of_care": self.calc_avg_packages_of_care,
                 "avg_connected_microproviders": self.calc_avg_connected_microproviders,
+                "avg_micro_quality": self.calc_avg_micro_quality,
+                "avg_micro_quality_threshold": self.calc_avg_micro_quality_threshold
+
                # "coordinator_register_size": self.calc_coordinator_register_size
             }
         )
 
     '''functions to access logs'''
     def print_logs(self):
-        """Print all accumulated log messages."""
+        """Return all accumulated log messages as a string."""
         self.log_buffer.seek(0)
-        print(self.log_buffer.read())
+        return self.log_buffer.read()
         
+    def export_logs(self, file_path):
+        self.log_buffer.seek(0)  # Move to the start of the log buffer
+        with open(file_path, "w") as log_file:
+            log_file.write(self.log_buffer.read())
+    
     def clear_logs(self):
         """Clear all accumulated log messages."""
         self.log_buffer.truncate(0)
@@ -974,7 +998,7 @@ class Care_Model(Model):
         and the number of residents leaving the model. Ensure that residents who
         leave are replaced.
         """
-        if self.warming_up or self.buffer_active:
+        if self.warming_up:
             return
 
         # Calculate the exact number of new residents to add for net growth
@@ -1010,48 +1034,37 @@ class Care_Model(Model):
     def check_warming_up(self):
         """
         Check if the warming-up condition is met.
-        The warming-up period ends when 18% of residents are receiving care.
+        The warming-up period ends when 10% of the over-65 population is receiving care.
         """
         if not self.warming_up:
             return
 
-        # Calculate the percentage of residents receiving care
-        total_residents = len(self.resident_agent_registry)
+        # Calculate the percentage of the over-65 population receiving care
         receiving_care = self.calc_receiving_care()
-        receiving_care_percentage = receiving_care / total_residents * 100
 
-        # Debugging logs
-        self.logger.info(f"Step {self.step_count}: Total Residents = {total_residents}")
+        receiving_care_percentage = receiving_care / self.over_65_population * 100
+
+        # Log warming-up diagnostic information
+        self.logger.info(f"Step {self.step_count}: Over-65 Population = {self.over_65_population}")
         self.logger.info(f"Step {self.step_count}: Residents Receiving Care = {receiving_care}")
         self.logger.info(f"Step {self.step_count}: Receiving Care Percentage = {receiving_care_percentage:.2f}%")
+        self.logger.info(f"check_warming_up: condition (percentage >= target) = {receiving_care_percentage >= self.target_care_percentage}")
 
         # Check if the warming-up threshold is reached
-        if receiving_care_percentage >= 18:
+        if receiving_care_percentage >= self.target_care_percentage:
             if self.warming_up_step is None:
                 self.warming_up_step = self.step_count
 
             self.warming_up = False
             self.logger.info(f"Warming-up period ended on step {self.step_count}")
 
-            self.buffer_active = True
-            self.logger.info(f"Buffer phase activated at step {self.step_count}")
-
-    '''function to manage buffer phase after warming-up'''
-    def check_buffer_active(self):
-        if not self.buffer_active:
-            return
-
-        self.buffer_step_count += 1
-        self.logger.info(f"Buffer Step Count: {self.buffer_step_count}")
-
-        if self.buffer_step_count >= self.buffer_steps:
-            self.buffer_active = False
-            self.buffer_end_step = self.buffer_end_step or self.step_count
-            self.logger.info(f"Buffer period ended at step {self.step_count}")
-
-            # Reset counters after the buffer period ends
+            # Reset counters after warming-up period ends
             self._reset_counters()
-            self.logger.info("Counters have been reset after the buffer period.")
+            self.logger.info("Counters have been reset after the warming-up period.")
+        else:
+            self.logger.info("Warming-up condition not yet met. Continuing simulation.")
+
+
 
     '''function to reset counters after buffer period'''
     def _reset_counters(self):
@@ -1073,29 +1086,32 @@ class Care_Model(Model):
     def add_new_agents(self):
         # During warming-up: Add microproviders if care percentage is below the threshold
         if self.warming_up:
-            total_residents = len(self.resident_agent_registry)
             receiving_care = self.calc_receiving_care()
-            receiving_care_percentage = receiving_care / total_residents * 100
+            # Use over_65_population as denominator to match check_warming_up()
+            receiving_care_percentage = receiving_care / self.over_65_population * 100
 
             # Target care percentage during warming-up
-            target_care_percentage = 18
-
             self.logger.info(f"Warming-Up: Care Percentage = {receiving_care_percentage:.2f}%")
+            
+            # Log to understand warm-up plateau
+            self.logger.info(f"add_new_agents: receiving_care={receiving_care}, percentage={receiving_care_percentage:.4f}%, target={self.target_care_percentage}%")
+            self.logger.info(f"add_new_agents: condition (percentage < target) = {receiving_care_percentage < self.target_care_percentage}")
+            self.logger.info(f"Microproviders in model: {len(self.microprovider_agent_registry)}")
 
-            if receiving_care_percentage < target_care_percentage:
-                # Add microproviders to meet the care demand
-                num_new_microproviders = 1  # Gradual addition (e.g., 1 per step)
-                for _ in range(num_new_microproviders):
-                    new_id = max(self.microprovider_agent_registry.keys(), default=0) + 1
-                    self._add_new_microprovider(new_id)
-                    self.logger.info(f"Microprovider {new_id} added during warming-up.")
-
-        # buffer between warming-up and normal operation - do nothing
-        if self.buffer_active:
-            return
+            if receiving_care_percentage < self.target_care_percentage:
+                # Only add microproviders if 5 steps have passed since last addition
+                if self.step_count - self.last_microprovider_add_step >= 5:
+                    num_new_microproviders = 1  # Add 5 microproviders then wait x steps
+                    for _ in range(num_new_microproviders):
+                        new_id = max(self.microprovider_agent_registry.keys(), default=0) + 1
+                        self._add_new_microprovider(new_id)
+                        self.logger.info(f"Microprovider {new_id} added during warming-up.")
+                    self.last_microprovider_add_step = self.step_count  # Update the last addition step
+            else:
+                self.logger.info(f"add_new_agents: NOT adding microproviders because {receiving_care_percentage:.4f}% >= {self.target_care_percentage}%")
         
         # After warming-up: Add microproviders randomly
-        if not self.warming_up and not self.buffer_active and random.random() < self.p_microprovider_join:
+        elif not self.warming_up and random.random() < self.p_microprovider_join:
             new_id = max(self.microprovider_agent_registry.keys(), default=0) + 1
             self._add_new_microprovider(new_id)
             self.logger.info(f"Microprovider {new_id} joined the model randomly.")
@@ -1134,6 +1150,13 @@ class Care_Model(Model):
         
     def _add_new_microprovider(self, new_id):
         a = MicroProvider_Agent(new_id, self)
+        
+        # During warm-up, ensure microproviders have higher quality to avoid plateau
+        if self.warming_up:
+            # Set minimum quality to 0.5 during warm-up to ensure they can match with more residents
+            if a.micro_quality < 0.5:
+                a.micro_quality = round(random.uniform(0.5, 1), 3)
+        
         self.schedule.add(a)
         self.microprovider_agent_registry[new_id] = {
             'agent_object': a,
@@ -1202,8 +1225,8 @@ class Care_Model(Model):
 
     def check_agent_removals(self):
         """Check and remove agents based on model conditions."""
-        # Prevent agent removal during warmup or buffer phases
-        if self.warming_up or self.buffer_active:
+        # Prevent agent removal during warmup phase
+        if self.warming_up:
             return
 
         # Reset the residents_leaving counter at the start of each step
@@ -1243,7 +1266,8 @@ class Care_Model(Model):
             'allocated_residents': agent.residents,
             'microprovider_peers': agent.microprovider_peers,
             'packages_of_care_delivered': agent.packages_of_care,
-            'has_capacity': agent.has_capacity
+            'has_capacity': agent.has_capacity,
+            'micro_quality': agent.micro_quality
         })
 
     def _update_resident_registry(self, agent):
@@ -1257,6 +1281,7 @@ class Care_Model(Model):
             'microproviders_to_recommend': agent.microproviders_to_recommend,
             'unpaidcarers': agent.unpaidcarers,
             'unpaidcare_rec': agent.unpaidcare_rec,
+            'micro_quality_threshold': agent.micro_quality_threshold
         })
 
     '''unpaid carers not in model currently'''
@@ -1301,6 +1326,16 @@ class Care_Model(Model):
                 count_receiving_care += 1
         return count_receiving_care
 
+    def calc_receiving_care_percentage(self):
+        """
+        Calculate the percentage of the over-65 population receiving care.
+        Returns 0 if over_65_population is 0 to avoid division by zero.
+        """
+        receiving_care = self.calc_receiving_care()
+        if self.over_65_population == 0:
+            return 0
+        return (receiving_care / self.over_65_population) * 100
+
     def calc_avg_packages_of_care(self):
         # Filter residents who have at least one package of care
         residents_with_care = [
@@ -1328,6 +1363,22 @@ class Care_Model(Model):
         num_residents = len(self.resident_agent_registry)
         return total_connections / num_residents if num_residents > 0 else 0
 
+    def calc_avg_micro_quality(self):
+        total_quality = sum(
+            agent['micro_quality']
+            for agent in self.microprovider_agent_registry.values()
+        )
+        num_microproviders = len(self.microprovider_agent_registry)
+        return total_quality / num_microproviders if num_microproviders > 0 else 0
+
+    def calc_avg_micro_quality_threshold(self):
+        total_threshold = sum(
+            agent['micro_quality_threshold']
+            for agent in self.resident_agent_registry.values()
+        )
+        num_residents = len(self.resident_agent_registry)
+        return total_threshold / num_residents if num_residents > 0 else 0
+
     # model step
     def step(self):
         self.logger.info(f"Model step {self.step_count}")
@@ -1336,15 +1387,14 @@ class Care_Model(Model):
         self.check_warming_up()
         # print(f"Warming up status: {self.warming_up}")
 
-        self.check_buffer_active()
-        # print(f"Buffer active status: {self.buffer_active}")
-
         # Add new agents during warming-up or randomly after warming-up
         self.add_new_agents()
 
         # Check agent removals and increase residents after warming-up
+
         self.check_agent_removals()
         # print(f"Agent removals checked at step {self.step_count}")
+
         self.increase_residents()
         # print(f"Residents increased at step {self.step_count}")
 
@@ -1391,46 +1441,41 @@ def run_care_model(params=None):
 
     # Initialize the model
     model = Care_Model(
-        N_RESIDENT_AGENTS=params.get("n_residents", 833),
+        over_65_population=params.get("over_65_population", 1412),
+        needs_help_percentage=params.get("needs_help_percentage", 26),
+        target_care_percentage=params.get("target_care_percentage", 11),
+        N_RESIDENT_AGENTS=params.get("n_resident_agents", None),  # This will be calculated dynamically in the model
+        N_COORDINATOR_AGENTS=params.get("n_coordinators", 0),
         N_MICROPROVIDER_AGENTS=params.get("n_microproviders", 0),
         N_UNPAIDCARE_AGENTS=params.get("n_unpaidcarers", 0),
-        N_COORDINATOR_AGENTS=params.get("n_coordinators", 0),
-        # grid and misc
         width=params.get("width", 50),
         height=params.get("height", 50),
-        random_seed=params.get("random_seed", 42),
-        # Care needs and capacities
         resident_care_need_min=params.get("resident_care_need_min", 1),
         resident_care_need_max=params.get("resident_care_need_max", 20),
         microprovider_care_cap_min=params.get("microprovider_care_cap_min", 5),
         microprovider_care_cap_max=params.get("microprovider_care_cap_max", 40),
-        # Probabilities and thresholds
-        p_resident_leave=params.get("p_resident_leave", 0.001),
-        p_microprovider_leave=params.get("p_microprovider_leave", 0.001),
+        p_resident_leave=params.get("p_resident_leave", 0.005),
+        p_microprovider_leave=params.get("p_microprovider_leave", 0.005),
         p_use_coordinator=params.get("p_use_coordinator", 0.01),
         p_approach_random_micro=params.get("p_approach_random_micro", 0.01),
         p_review_care=params.get("p_review_care", 0.001),
         p_promote_micro=params.get("p_promote_micro", 0.001),
-        p_microprovider_join=params.get("p_microprovider_join", 0.01),  # Updated parameter name
-        # microprovider attributes
-        micro_join_coord=params.get("micro_join_coord", 0.5),
-        #coordinator attributes
+        p_microprovider_join=params.get("p_microprovider_join", 0.025),  # Updated parameter name
+        micro_join_coord=params.get("micro_join_coord", 0.01),
         coord_micro_quality_threshold=params.get("coord_micro_quality_threshold", 0.5),
-        coordinator_has_threshold=params.get("coordinator_has_threshold", True),
+        coordinator_has_threshold=params.get("coordinator_has_threshold", True), # get rid of this parameter and just set threshold for all coordinators in model init?
         resident_coordinator_group_interval=params.get("resident_coordinator_group_interval", 4),
         microprovider_coordinator_group_interval=params.get("microprovider_coordinator_group_interval", 4),
         p_micro_support_attendance=params.get("p_micro_support_attendance", 0.1),
-        p_resident_support_attendance=params.get("p_resident_support_attendance", 0.01)
+        p_resident_support_attendance=params.get("p_resident_support_attendance", 0.01),
+        p_coord_microprovider_outreach=params.get("p_coord_microprovider_outreach", 0.1),
+        p_promote_microproviding=params.get("p_promote_microproviding", 0.01)
         )
 
     # Run the model until the warming-up phase ends
     while model.warming_up:
         model.step()
         # print(f"Warming up... Step {model.step_count}")
-
-    while model.buffer_active:
-        model.step()
-        # print(f"Buffering... Step {model.step_count}")
 
     # Calculate the total number of steps to run after warming-up
     total_steps = num_years * 52  # 1 year = 52 weeks
@@ -1479,6 +1524,9 @@ def run_care_model(params=None):
         "data_coord_registry": data_coord_registry,
     }
 
-# results = run_care_model(params={"num_years": 5, "n_coordinators":1})
-# print(results['model'].num_resident_agents)
-# print(len(results['data_resident_registry']))
+# params = {"over_65_population": 1412, "num_years": 15}
+# results = run_care_model(params)
+# print(len(results["data_microprovider_registry"]))
+
+# params = {"target_care_percentage": 20}
+# results = run_care_model(params)

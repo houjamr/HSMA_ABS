@@ -18,6 +18,8 @@ from mesa.time import RandomActivation # random order of agent actions
 from mesa.space import MultiGrid # multiple agents er cell
 from mesa.datacollection import DataCollector
 
+from model import run_care_model
+
 # from model import run_care_model
 
 def extract_relationships(coord_data, micro_data, res_data):
@@ -255,10 +257,10 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
         if not (isinstance(position, tuple) and len(position) == 2 and all(isinstance(coord, (int, float)) for coord in position)):
             raise ValueError(f"Invalid position for node {node}: {position}")
 
-    fig, ax = plt.subplots(figsize=(16, 12))
+    fig, ax = plt.subplots(figsize=(12, 8),dpi=100, constrained_layout=True)
 
-    # Highlight microproviders based on their degree (number of connections)
-    microprovider_degrees = {node: G.degree(node) for node in microproviders}
+    # Highlight microproviders based on their connections to residents only
+    microprovider_degrees = {node: len([neighbor for neighbor in G.neighbors(node) if neighbor.startswith('R')]) for node in microproviders}
     microprovider_sizes = [1200 + 50 * microprovider_degrees[node] for node in microproviders]  # Scale size by degree
     microprovider_colors = [0.5 + 0.5 * (microprovider_degrees[node] / max(microprovider_degrees.values())) for node in microproviders]  # Scale color intensity
 
@@ -347,10 +349,28 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
     sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=plt.Normalize(vmin=min(microprovider_degrees.values()), vmax=max(microprovider_degrees.values())))
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, orientation='horizontal', pad=0.1)
-    cbar.set_label('Microprovider Connectivity', fontsize=16, fontweight='bold')
+    cbar.set_label('Number of Connected Residents', fontsize=16, fontweight='bold')
 
     # Remove the border from the figure
     for spine in ax.spines.values():
         spine.set_visible(False)
 
     return fig
+
+params = {"n_coordinators": 1}
+
+results = run_care_model(params)
+
+# The model returns registry DataFrames under these keys
+# relationships, positions = extract_relationships(
+#     results.get('data_coord_registry'),
+#     results.get('data_microprovider_registry'),
+#     results.get('data_resident_registry'))
+
+# G, pos, coordinators, microproviders, residents = create_network_graph(
+#     results.get('data_coord_registry'),
+#     results.get('data_microprovider_registry'),
+#     results.get('data_resident_registry'))
+
+# fig = visualize_network(G, pos, coordinators, microproviders, residents)
+# plt.show()

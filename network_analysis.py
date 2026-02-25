@@ -357,9 +357,6 @@ def visualize_network(G, pos, coordinators, microproviders, residents):
 
     return fig
 
-params = {"n_coordinators": 1}
-
-results = run_care_model(params)
 
 # The model returns registry DataFrames under these keys
 # relationships, positions = extract_relationships(

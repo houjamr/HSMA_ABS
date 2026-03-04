@@ -1,6 +1,4 @@
-# WordCloud import disabled to avoid native dependency issues on Windows.
-# If you want to re-enable, install `wordcloud` into your env and uncomment.
-# from wordcloud import WordCloud
+
 import glob
 import mesa
 import streamlit as st
@@ -654,10 +652,7 @@ elif page == "Do You Dig it?":
         comments.append(comment)
         pd.DataFrame({"comment": comments}).to_csv(COMMENTS_FILE, index=False)
 
-    # WordCloud generation is disabled due to native dependency issues.
-    # If you re-enable `wordcloud`, restore the original implementation.
-    def generate_word_cloud(comments):
-        return None
+    # Comments summary helper removed.
 
     # Streamlit App
     st.subheader("Do you Dig it? Share Your Thoughts!")
@@ -709,39 +704,21 @@ elif page == "Do You Dig it?":
             st.success(f"You already selected 'I dig it!' — Total who've selected dig it: {counts['dig']}")
         elif st.session_state.voted_choice == "dont_dig":
             st.success(f"You already selected 'I don't dig it!' — Total who've selected don't dig it: {counts['dont_dig']}")
-
     # Comment Input
-    st.subheader("Leave some feedback for the wordcloud!")
+    st.subheader("Upload some feedback to the web app (anonymous feedback welcome!)")
+    st.info("If you'd like to get in touch via email instead, you can email\
+            james.hough@somerset.gov.uk")
     comment = st.text_area("Your Comment", placeholder="Type your thoughts here...")
-    if st.button("Submit"):
+    if st.button("Submit Comment"):
         if comment.strip():
             save_comment(comment)
             st.success("Thank you for your comment!")
         else:
             st.error("Comment cannot be empty.")
 
-    # Display Word Cloud (disabled)
+    # Comments visualization and raw display
     comments = load_comments()
-    if comments:
-        st.info("Word cloud generation is currently disabled (missing native dependency).")
-        # Quick fallback: show simple horizontal bar chart of top words
-        try:
-            from collections import Counter
-
-            words = " ".join(comments).split()
-            cleaned = [w.strip('.,!?:;()\"\'').lower() for w in words if w.strip()]
-            counts = Counter(cleaned)
-            top = counts.most_common(20)
-            if top:
-                words_, freqs = zip(*top)
-                fig, ax = plt.subplots(figsize=(8, 5))
-                ax.barh(list(reversed(words_)), list(reversed(freqs)))
-                ax.set_xlabel("Frequency")
-                st.pyplot(fig)
-        except Exception:
-            st.info("Comments present but unable to render fallback visualization.")
-    else:
-        st.info("No comments yet. Be the first to leave one!")
+    st.write(pd.DataFrame({"comment": comments}))
 
 elif page == "Thank Yous, Community Groups in Somerset, and Get in Touch!":
     st.header("Thank Yous, Community Groups in Somerset, and Get in Touch!")
